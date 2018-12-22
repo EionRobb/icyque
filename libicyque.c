@@ -410,18 +410,27 @@ icq_add_buddy_with_invite(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup 
 	
 	GString *postdata = g_string_new(NULL);
 	const gchar *url = ICQ_API_SERVER "/buddylist/addBuddy";
+	gchar *uuid = purple_uuid_random();
 	
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
 	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
 	g_string_append_printf(postdata, "authorizationMsg=%s&", purple_url_encode(message));
 	g_string_append_printf(postdata, "buddy=%s&", purple_url_encode(who));
 	g_string_append(postdata, "f=json&");
 	g_string_append_printf(postdata, "group=%s&", purple_url_encode(group_name));
 	g_string_append_printf(postdata, "nick=%s&", purple_url_encode(alias && *alias ? alias : who));
+	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
 	g_string_append(postdata, "preAuthorized=true&");
+	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
+	
+	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
 	
 	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
 	
 	g_string_free(postdata, TRUE);
+	g_free(uuid);
 }
 	
 static void
@@ -568,7 +577,8 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 		purple_serv_got_typing(ia->pc, aimId, 10, typing_state);
 		
 	} else if (purple_strequal(event_type, "histDlgState")) {
-		JsonArray *messages = json_object_get_array_member(data, "messages");
+		JsonObject *tail = json_object_get_object_member(data, "tail");
+		JsonArray *messages = json_object_get_array_member((tail != NULL ? tail : data), "messages");
 		const gchar *sn = json_object_get_string_member(data, "sn");
 		guint i, len = json_array_get_length(messages);
 		
