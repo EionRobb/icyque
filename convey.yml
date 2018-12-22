@@ -1,0 +1,58 @@
+---
+tasks:
+  clean:
+    type: convey/clean
+    files:
+      - libicyque-*.so
+
+  import:
+    type: docker/import
+    files:
+      - .:.
+
+  export:
+    type: docker/export
+    files:
+      - libicyque-*.so
+
+  purple2:
+    type: docker/run
+    image: pidgin/pidgin2-dev:${TAG}
+    workdir: /workspace
+    script:
+      - set -ex
+      - make clean
+      - rm -f libicyque-${TAG}.so
+      - make libicyque.so
+      - mv libicyque.so libicyque-${TAG}.so
+
+  purple2-debian-stretch-amd64:
+    type: convey/extend
+    task: purple2
+    environment:
+      - TAG=debian-stretch-amd64
+  purple2-fedora-28-amd64:
+    type: convey/extend
+    task: purple2
+    environment:
+      - TAG=fedora-28-amd64
+
+plans:
+  default:
+    stages:
+      - name: setup
+        tasks:
+          - import
+      - name: builds
+        tasks:
+          - purple2-debian-stretch-amd64
+          - purple2-fedora-28-amd64
+      - name: export
+        tasks:
+          - export
+  clean:
+    stages:
+      - name: clean
+        tasks:
+          - clean
+
