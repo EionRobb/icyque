@@ -408,6 +408,43 @@ icq_send_im(PurpleConnection *pc,
 	return 1;
 }
 
+guint
+icq_send_typing(PurpleConnection *pc, const gchar *who, PurpleIMTypingState state)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	GString *postdata = g_string_new(NULL);
+	gchar *uuid = purple_uuid_random();
+	const gchar *url = ICQ_API_SERVER "/im/setTyping";
+	const gchar *typingStatus = "typing";
+	
+	if (state == PURPLE_IM_TYPED) {
+		typingStatus = "typed";
+	} else if (state == PURPLE_IM_NOT_TYPING) {
+		typingStatus = "looking";
+	}
+	
+	// Needs to be alphabetical
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
+	g_string_append_printf(postdata, "t=%s&", purple_url_encode(who));
+	g_string_append_printf(postdata, "ts=%d&", (int) time(NULL));
+	g_string_append_printf(postdata, "typingStatus=%s", typingStatus);
+	
+	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+	g_free(uuid);
+	
+	return 10;
+}
+
 static void
 icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 {
@@ -763,7 +800,7 @@ plugin_init(PurplePlugin *plugin)
 	prpl_info->login = icq_login;
 	prpl_info->close = icq_close;
 	prpl_info->send_im = icq_send_im;
-	// prpl_info->send_typing = icyque_send_typing;
+	prpl_info->send_typing = icq_send_typing;
 	// prpl_info->join_chat = icyque_join_chat;
 	// prpl_info->get_chat_name = icyque_get_chat_name;
 	// prpl_info->find_blist_chat = icyque_find_chat;
