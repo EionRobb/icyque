@@ -71,6 +71,7 @@ typedef struct {
 	GHashTable *user_ids;
 	gchar *session_key;
 	gchar *token;
+	gchar *aimsid;
 
 	GSList *http_conns; /**< PurpleHttpConnection to be cancelled on logout */
 	gchar *device_id;
@@ -294,6 +295,7 @@ icq_fetch_url_with_method(IcyQueAccount *ia, const gchar *method, const gchar *u
 	purple_http_request_set_method(request, method);
 	purple_http_request_header_set(request, "Accept", "*/*");
 	purple_http_request_header_set(request, "Cookie", cookies);
+	purple_http_request_set_timeout(request, 240);
 
 	if (postdata) {
 		if (strstr(url, "/auth/clientLogin") && strstr(postdata, "pwd")) {
@@ -325,12 +327,16 @@ icq_fetch_url_with_method(IcyQueAccount *ia, const gchar *method, const gchar *u
 }
 
 static PurpleGroup *
-icq_get_or_create_default_group()
+icq_get_or_create_default_group(const gchar *group_name)
 {
-	PurpleGroup *icq_group = purple_blist_find_group("ICQ");
+	if (group_name == NULL) {
+		group_name = "ICQ";
+	}
+	
+	PurpleGroup *icq_group = purple_blist_find_group(group_name);
 
 	if (!icq_group) {
-		icq_group = purple_group_new("ICQ");
+		icq_group = purple_group_new(group_name);
 		purple_blist_add_group(icq_group, NULL);
 	}
 
@@ -356,6 +362,176 @@ icq_status_types(PurpleAccount *account)
 	types = g_list_append(types, status);
 
 	return types;
+}
+
+
+static int
+icq_send_im(PurpleConnection *pc,
+#if PURPLE_VERSION_CHECK(3, 0, 0)
+				PurpleMessage *msg)
+{
+	const gchar *who = purple_message_get_recipient(msg);
+	const gchar *message = purple_message_get_contents(msg);
+#else
+				const gchar *who, const gchar *message, PurpleMessageFlags flags)
+{
+#endif
+	
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	GString *postdata = g_string_new(NULL);
+	gchar *stripped = purple_markup_strip_html(message);
+	gchar *uuid = purple_uuid_random();
+	const gchar *url = ICQ_API_SERVER "/im/sendIM";
+	
+	// Needs to be alphabetical
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append(postdata, "mentions=&");
+	g_string_append_printf(postdata, "message=%s&", purple_url_encode(stripped));
+	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
+	g_string_append(postdata, "offlineIM=true&");
+	g_string_append_printf(postdata, "t=%s&", purple_url_encode(who));
+	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
+	
+	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+	g_free(stripped);
+	g_free(uuid);
+	
+	return 1;
+}
+
+static void
+icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
+{
+	if (event_type == NULL) return;
+	
+	if (purple_strequal(event_type, "presence")) {
+		const gchar *aimId = json_object_get_string_member(data, "aimId");
+		const gchar *state = json_object_get_string_member(data, "state");
+		
+		purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+		
+	} else if (purple_strequal(event_type, "typing")) {
+		const gchar *aimId = json_object_get_string_member(data, "aimId");
+		const gchar *typingStatus = json_object_get_string_member(data, "typingStatus");
+		PurpleIMTypingState typing_state;
+		
+		if (purple_strequal(typingStatus, "typing")) {
+			typing_state = PURPLE_IM_TYPING;
+		} else if (purple_strequal(typingStatus, "typed")) {
+			typing_state = PURPLE_IM_TYPED;
+		} else {
+			typing_state = PURPLE_IM_NOT_TYPING;
+		}
+		
+		purple_serv_got_typing(ia->pc, aimId, 10, typing_state);
+		
+	} else if (purple_strequal(event_type, "histDlgState")) {
+		JsonArray *messages = json_object_get_array_member(data, "messages");
+		const gchar *sn = json_object_get_string_member(data, "sn");
+		guint i, len = json_array_get_length(messages);
+		
+		for (i = 0; i < len; i++) {
+			JsonObject *message = json_array_get_object_element(messages, i);
+			gint64 time = json_object_get_int_member(message, "time");
+			const gchar *mediaType = json_object_get_string_member(message, "mediaType");
+			const gchar *text = json_object_get_string_member(message, "text");
+			PurpleMessageFlags msg_flags = PURPLE_MESSAGE_RECV;
+			gchar *escaped_text = purple_markup_escape_text(text, -1);
+			
+			if (json_object_get_boolean_member(message, "outgoing")) {
+				msg_flags = PURPLE_MESSAGE_SEND;
+			}
+			
+			if (purple_strequal(mediaType, "text")) {
+				purple_serv_got_im(ia->pc, sn, escaped_text, msg_flags, (time_t) time);
+			} else {
+				purple_debug_warning("icyque", "Unknown message mediaType '%s'\n", mediaType);
+			}
+			
+			g_free(escaped_text);
+		}
+		
+	} else if (purple_strequal(event_type, "userAddedToBuddyList")) {
+		/*{
+					"requester": "123456789",
+					"displayAIMid": "Person Name",
+					"authRequested": 0
+				}, */
+				
+	} else if (purple_strequal(event_type, "buddylist")) {
+		JsonArray *groups = json_object_get_array_member(data, "groups");
+		guint i, len = json_array_get_length(groups);
+		
+		for (i = 0; i < len; i++) {
+			JsonObject *group = json_array_get_object_element(groups, i);
+			const gchar *group_name = json_object_get_string_member(group, "name");
+			PurpleGroup *pgroup = icq_get_or_create_default_group(group_name);
+			JsonArray *buddies = json_object_get_array_member(group, "buddies");
+			guint j, buddies_len = json_array_get_length(buddies);
+			
+			for (j = 0; j < buddies_len; j++) {
+				JsonObject *buddy = json_array_get_object_element(buddies, j);
+				const gchar *aimId = json_object_get_string_member(buddy, "aimId");
+				const gchar *state = json_object_get_string_member(buddy, "state");
+				PurpleBuddy *pbuddy = purple_blist_find_buddy(ia->account, aimId);
+				
+				if (pbuddy == NULL) {
+					const gchar *friendly = json_object_get_string_member(buddy, "friendly");
+					pbuddy = purple_buddy_new(ia->account, aimId, friendly);
+					
+					purple_blist_add_buddy(pbuddy, NULL, pgroup, NULL);
+				}
+				
+				purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+			}
+		}
+		
+	}
+}
+
+static void
+icq_fetch_events_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	JsonObject *response = json_object_get_object_member(obj, "response");
+	JsonObject *data = json_object_get_object_member(response, "data");
+	
+	const gchar *fetchBaseURL = json_object_get_string_member(data, "fetchBaseURL");
+	JsonArray *events = json_object_get_array_member(data, "events");
+	guint i, len = json_array_get_length(events);
+	for (i = 0; i < len; i++) {
+		JsonObject *event = json_array_get_object_element(events, i);
+		const gchar *type = json_object_get_string_member(event, "type");
+		JsonObject *eventData = json_object_get_object_member(event, "eventData");
+		
+		icq_process_event(ia, type, eventData);
+	}
+	
+	icq_fetch_url_with_method(ia, "GET", fetchBaseURL, NULL, icq_fetch_events_cb, NULL);
+}
+
+static void
+icq_session_start_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	JsonObject *response = json_object_get_object_member(obj, "response");
+	JsonObject *data = json_object_get_object_member(response, "data");
+	
+	const gchar *aimsid = json_object_get_string_member(data, "aimsid");
+	const gchar *fetchBaseURL = json_object_get_string_member(data, "fetchBaseURL");
+	
+	ia->aimsid = g_strdup(aimsid);
+	
+	purple_connection_set_state(ia->pc, PURPLE_CONNECTION_CONNECTED);
+	
+	icq_fetch_url_with_method(ia, "GET", fetchBaseURL, NULL, icq_fetch_events_cb, NULL);
 }
 
 static void
@@ -388,7 +564,7 @@ icq_session_start(IcyQueAccount *ia)
 	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
 	g_free(sig_sha256);
 	
-	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, icq_session_start_cb, NULL);
 	
 	g_string_free(postdata, TRUE);
 }
@@ -467,8 +643,6 @@ icq_login(PurpleAccount *account)
 		icq_session_start(ia);
 	}
 	
-	icq_get_or_create_default_group();
-	
 	purple_connection_set_state(pc, PURPLE_CONNECTION_CONNECTING);
 }
 
@@ -502,6 +676,7 @@ icq_close(PurpleConnection *pc)
 	
 	g_free(ia->token);
 	g_free(ia->session_key);
+	g_free(ia->aimsid);
 	
 	g_free(ia);
 }
@@ -587,7 +762,7 @@ plugin_init(PurplePlugin *plugin)
 	// prpl_info->chat_info_defaults = icyque_chat_info_defaults;
 	prpl_info->login = icq_login;
 	prpl_info->close = icq_close;
-	//prpl_info->send_im = icq_send_im;
+	prpl_info->send_im = icq_send_im;
 	// prpl_info->send_typing = icyque_send_typing;
 	// prpl_info->join_chat = icyque_join_chat;
 	// prpl_info->get_chat_name = icyque_get_chat_name;
