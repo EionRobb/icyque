@@ -13,9 +13,9 @@
 
 #define ICQ_EVENTS      "myInfo,presence,buddylist,typing,hiddenChat,hist,mchat,sentIM,imState,dataIM,offlineIM,userAddedToBuddyList,service,lifestream,apps,permitDeny,replace,diff" //webrtcMsg
 #define ICQ_PRESENCE_FIELDS    "quiet,ssl,abFriendly,role,capabilities,role,abPhones,aimId,autoAddition,friendly,largeIconId,lastseen,mute,pending,state,eventType,seqNum"
+#define ICQ_ASSERT_CAPS "094613564C7F11D18222444553540000,0946135A4C7F11D18222444553540000,0946135B4C7F11D18222444553540000,0946135D4C7F11D18222444553540000,0946135C4C7F11D18222444553540000,094613574C7F11D18222444553540000,094613504C7F11D18222444553540000,094613514C7F11D18222444553540000,094613534C7F11D18222444553540000,0946135E4C7F11D18222444553540000,094613544C7F11D18222444553540000,0946135F4C7F11D18222444553540000"
 #define ICQ_API_SERVER        "https://api.icq.net"
-#define ICQ_DEVID "ao1mAegmj4_7xQOy"
-#define WIM_API_START_SESSION_HOST			"https://api.icq.net/aim/startSession"
+#define ICQ_DEVID             "ao1mAegmj4_7xQOy"
 
 #ifndef _
 #	define _(a) (a)
@@ -364,22 +364,28 @@ icq_session_start(IcyQueAccount *ia)
 	const gchar *url = ICQ_API_SERVER "/aim/startSession";
 	GString *postdata = g_string_new(NULL);
 	
+	// Make sure these are added alphabetically for the signature to work
 	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
-	g_string_append(postdata, "f=json&");
-	g_string_append_printf(postdata, "ts=%d&", (int) time(NULL));
-	g_string_append_printf(postdata, "events=%s&", purple_url_encode(ICQ_EVENTS));
+	// g_string_append_printf(postdata, "assertCaps=%s&", purple_url_encode(ICQ_ASSERT_CAPS));
+	// g_string_append_printf(postdata, "buildNumber=%s&", purple_url_encode("23341"));
+	// g_string_append_printf(postdata, "clientName=%s&", purple_url_encode("ICQ"));
 	g_string_append_printf(postdata, "deviceId=%s&", purple_url_encode(ia->device_id));
-	g_string_append_printf(postdata, "includePresenceFields=%s&", purple_url_encode(ICQ_PRESENCE_FIELDS));
-	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append_printf(postdata, "events=%s&", purple_url_encode(ICQ_EVENTS));
+	g_string_append(postdata, "f=json&");
 	g_string_append(postdata, "imf=plain&");
+	g_string_append_printf(postdata, "includePresenceFields=%s&", purple_url_encode(ICQ_PRESENCE_FIELDS));
+	// g_string_append_printf(postdata, "interestCaps=%s&", purple_url_encode("094613504C7F11D18222444553540000,094613514C7F11D18222444553540000,8EEC67CE70D041009409A7C1602A5C84"));
+	g_string_append(postdata, "invisible=false&");
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append(postdata, "language=en-US&");
 	g_string_append(postdata, "rawMsg=0&");
 	g_string_append(postdata, "sessionTimeout=31536000&");
-	
-	g_string_append(postdata, "invisible=false&");
-	g_string_append(postdata, "view=online&"); //todo mobile?
+	g_string_append(postdata, "sig_sha256_force=1&");
+	g_string_append_printf(postdata, "ts=%d&", (int) time(NULL));
+	g_string_append(postdata, "view=online"); //todo mobile?
 	
 	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
-	g_string_append_printf(postdata, "sig_sha256=%s&", purple_url_encode(sig_sha256));
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
 	g_free(sig_sha256);
 	
 	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
@@ -400,7 +406,7 @@ icq_login_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 		const gchar *sessionSecret = json_object_get_string_member(data, "sessionSecret");
 		
 		if (a != NULL) {
-			ia->token = g_strdup(a);
+			ia->token = g_strdup(purple_url_decode(a));
 			ia->session_key = icq_generate_signature(sessionSecret, purple_connection_get_password(ia->pc));
 			purple_connection_set_display_name(ia->pc, loginId);
 			
@@ -541,7 +547,7 @@ libpurple2_plugin_unload(PurplePlugin *plugin)
 
 static void
 plugin_init(PurplePlugin *plugin)
-{
+{	
 	PurplePluginInfo *info;
 	PurplePluginProtocolInfo *prpl_info = g_new0(PurplePluginProtocolInfo, 1);
 
