@@ -366,6 +366,70 @@ icq_status_types(PurpleAccount *account)
 }
 
 
+static void
+icq_block_user(PurpleConnection *pc, const char *who)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	
+	GString *postdata = g_string_new(NULL);
+	const gchar *url = ICQ_API_SERVER "/preference/setPermitDeny";
+	
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "pdIgnore=%s&", purple_url_encode(who));
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+}
+
+static void
+icq_unblock_user(PurpleConnection *pc, const char *who)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	
+	GString *postdata = g_string_new(NULL);
+	const gchar *url = ICQ_API_SERVER "/preference/setPermitDeny";
+	
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "pdIgnoreRemove=%s&", purple_url_encode(who));
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+}
+
+static void
+icq_add_buddy_with_invite(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group, const char *message)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	const gchar *who = purple_buddy_get_name(buddy);
+	const gchar *alias = purple_buddy_get_alias(buddy);
+	const gchar *group_name = purple_group_get_name(group);
+	
+	GString *postdata = g_string_new(NULL);
+	const gchar *url = ICQ_API_SERVER "/buddylist/addBuddy";
+	
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append_printf(postdata, "authorizationMsg=%s&", purple_url_encode(message));
+	g_string_append_printf(postdata, "buddy=%s&", purple_url_encode(who));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "group=%s&", purple_url_encode(group_name));
+	g_string_append_printf(postdata, "nick=%s&", purple_url_encode(alias && *alias ? alias : who));
+	g_string_append(postdata, "preAuthorized=true&");
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+}
+	
+static void
+icq_add_buddy(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group)
+{
+	icq_add_buddy_with_invite(pc, buddy, group, NULL);
+}
+
 static int
 icq_send_im(PurpleConnection *pc,
 #if PURPLE_VERSION_CHECK(3, 0, 0)
@@ -775,7 +839,7 @@ plugin_init(PurplePlugin *plugin)
 	prpl_info->struct_size = sizeof(PurplePluginProtocolInfo);
 #endif
 #if PURPLE_MINOR_VERSION >= 8
-/* prpl_info->add_buddy_with_invite = icyque_add_buddy_with_invite; */
+	prpl_info->add_buddy_with_invite = icq_add_buddy_with_invite;
 #endif
 
 	// prpl_info->options = OPT_PROTO_CHAT_TOPIC | OPT_PROTO_SLASH_COMMANDS_NATIVE | OPT_PROTO_UNIQUE_CHATNAME;
@@ -809,13 +873,13 @@ plugin_init(PurplePlugin *plugin)
 	// prpl_info->chat_send = icyque_chat_send;
 	// prpl_info->set_chat_topic = icyque_chat_set_topic;
 	// prpl_info->get_cb_real_name = icyque_get_real_name;
-	//prpl_info->add_buddy = icq_add_buddy;
+	prpl_info->add_buddy = icq_add_buddy;
 	// prpl_info->remove_buddy = icyque_buddy_remove;
 	// prpl_info->group_buddy = icyque_fake_group_buddy;
 	// prpl_info->rename_group = icyque_fake_group_rename;
 	//prpl_info->get_info = icq_get_info;
-	// prpl_info->add_deny = icyque_block_user;
-	// prpl_info->rem_deny = icyque_unblock_user;
+	prpl_info->add_deny = icq_block_user;
+	prpl_info->rem_deny = icq_unblock_user;
 
 	// prpl_info->roomlist_get_list = icyque_roomlist_get_list;
 	// prpl_info->roomlist_room_serialize = icyque_roomlist_serialize;
@@ -907,13 +971,14 @@ icyque_protocol_server_iface_init(PurpleProtocolServerIface *prpl_info)
 	//prpl_info->get_info = icyque_get_info;
 	//prpl_info->set_status = icyque_set_status;
 	//prpl_info->set_idle = icyque_set_idle;
+	prpl_info->add_buddy = icq_add_buddy_with_invite;
 }
 
 static void
 icyque_protocol_privacy_iface_init(PurpleProtocolPrivacyIface *prpl_info)
 {
-	//prpl_info->add_deny = icyque_block_user;
-	//prpl_info->rem_deny = icyque_unblock_user;
+	prpl_info->add_deny = icq_block_user;
+	prpl_info->rem_deny = icq_unblock_user;
 }
 
 static void 
