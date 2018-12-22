@@ -12,7 +12,7 @@
 #endif
 
 #define ICQ_EVENTS      "myInfo,presence,buddylist,typing,hiddenChat,hist,mchat,sentIM,imState,dataIM,offlineIM,userAddedToBuddyList,service,lifestream,apps,permitDeny,replace,diff" //webrtcMsg
-#define ICQ_PRESENCE_FIELDS    "quiet,ssl,abFriendly,role,capabilities,role,abPhones,aimId,autoAddition,friendly,largeIconId,lastseen,mute,pending,state,eventType,seqNum"
+#define ICQ_PRESENCE_FIELDS    "quiet,ssl,abFriendly,role,capabilities,role,abPhones,aimId,autoAddition,friendly,largeIconId,lastseen,mute,pending,state,eventType,seqNum,displayId,friendlyName,userType,statusMsg,statusTime,buddyIcon,abContactName,abPhones,official"
 #define ICQ_ASSERT_CAPS "094613564C7F11D18222444553540000,0946135A4C7F11D18222444553540000,0946135B4C7F11D18222444553540000,0946135D4C7F11D18222444553540000,0946135C4C7F11D18222444553540000,094613574C7F11D18222444553540000,094613504C7F11D18222444553540000,094613514C7F11D18222444553540000,094613534C7F11D18222444553540000,0946135E4C7F11D18222444553540000,094613544C7F11D18222444553540000,0946135F4C7F11D18222444553540000"
 #define ICQ_API_SERVER        "https://api.icq.net"
 #define ICQ_DEVID             "ao1mAegmj4_7xQOy"
@@ -511,6 +511,29 @@ icq_send_typing(PurpleConnection *pc, const gchar *who, PurpleIMTypingState stat
 }
 
 static void
+icq_got_buddy_icon(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	PurpleBuddy *buddy = user_data;
+
+	if (obj != NULL) {
+		const gchar *response_str;
+		gsize response_len;
+		gpointer response_dup;
+		const gchar *buddyIcon = g_dataset_get_data(buddy, "buddyIcon");
+
+		response_str = g_dataset_get_data(obj, "raw_body");
+		response_len = json_object_get_int_member(obj, "len");
+		response_dup = g_memdup(response_str, response_len);
+
+		const gchar *username = purple_buddy_get_name(buddy);
+		
+		purple_buddy_icons_set_for_user(ia->account, username, response_dup, response_len, buddyIcon);
+	}
+	
+	g_dataset_destroy(buddy);
+}
+
+static void
 icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 {
 	if (event_type == NULL) return;
@@ -520,6 +543,14 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 		const gchar *state = json_object_get_string_member(data, "state");
 		
 		purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+		
+		PurpleBuddy *pbuddy = purple_blist_find_buddy(ia->account, aimId);
+		if (pbuddy != NULL) {
+			const gchar *buddyIcon = json_object_get_string_member(data, "buddyIcon");
+			g_dataset_set_data_full(pbuddy, "buddyIcon", g_strdup(buddyIcon), g_free);
+			
+			icq_fetch_url_with_method(ia, "GET", buddyIcon, NULL, icq_got_buddy_icon, pbuddy);
+		}
 		
 	} else if (purple_strequal(event_type, "typing")) {
 		const gchar *aimId = json_object_get_string_member(data, "aimId");
