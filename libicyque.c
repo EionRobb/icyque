@@ -19,6 +19,7 @@
 
 #ifndef _
 #	define _(a) (a)
+#	define N_(a) (a)
 #endif
 
 
@@ -126,7 +127,7 @@ icq_generate_signature(const gchar *data, const gchar *session)
 	gc_hmac_sha256(session, strlen(session), data, strlen(data), sig);
 	sig[32] = '\0';
 	
-	return purple_base64_encode(sig, 32);
+	return g_base64_encode(sig, 32);
 }
 
 gchar *
@@ -420,7 +421,7 @@ icq_send_typing(PurpleConnection *pc, const gchar *who, PurpleIMTypingState stat
 	if (state == PURPLE_IM_TYPED) {
 		typingStatus = "typed";
 	} else if (state == PURPLE_IM_NOT_TYPING) {
-		typingStatus = "looking";
+		typingStatus = "none";
 	}
 	
 	// Needs to be alphabetical
@@ -831,8 +832,8 @@ static PurplePluginInfo info = {
 	0,								/* flags */
 	NULL,							/* dependencies */
 	PURPLE_PRIORITY_DEFAULT,		/* priority */
-	"prpl-eionrobb-icyque",		/* id */
-	"IcyQue",					/* name */
+	"prpl-eionrobb-icyque",			/* id */
+	"ICQ (WIM)",					/* name */
 	"0.1",							/* version */
 	"",								/* summary */
 	"",								/* description */
@@ -853,4 +854,169 @@ static PurplePluginInfo info = {
 
 PURPLE_INIT_PLUGIN(icyque, plugin_init, info);
 
-#endif
+#else
+
+G_MODULE_EXPORT GType icyque_protocol_get_type(void);
+#define ICYQUE_TYPE_PROTOCOL			(icyque_protocol_get_type())
+#define ICYQUE_PROTOCOL(obj)			(G_TYPE_CHECK_INSTANCE_CAST((obj), ICYQUE_TYPE_PROTOCOL, IcyQueProtocol))
+#define ICYQUE_PROTOCOL_CLASS(klass)		(G_TYPE_CHECK_CLASS_CAST((klass), ICYQUE_TYPE_PROTOCOL, IcyQueProtocolClass))
+#define ICYQUE_IS_PROTOCOL(obj)		(G_TYPE_CHECK_INSTANCE_TYPE((obj), ICYQUE_TYPE_PROTOCOL))
+#define ICYQUE_IS_PROTOCOL_CLASS(klass)	(G_TYPE_CHECK_CLASS_TYPE((klass), ICYQUE_TYPE_PROTOCOL))
+#define ICYQUE_PROTOCOL_GET_CLASS(obj)	(G_TYPE_INSTANCE_GET_CLASS((obj), ICYQUE_TYPE_PROTOCOL, IcyQueProtocolClass))
+
+typedef struct _IcyQueProtocol
+{
+	PurpleProtocol parent;
+} IcyQueProtocol;
+
+typedef struct _IcyQueProtocolClass
+{
+	PurpleProtocolClass parent_class;
+} IcyQueProtocolClass;
+
+static void
+icyque_protocol_init(PurpleProtocol *prpl_info)
+{
+	PurpleProtocol *info = prpl_info;
+
+	info->id = "prpl-eionrobb-icyque";
+	info->name = "ICQ (WIM)";
+}
+
+static void
+icyque_protocol_class_init(PurpleProtocolClass *prpl_info)
+{
+	prpl_info->login = icq_login;
+	prpl_info->close = icq_close;
+	prpl_info->status_types = icq_status_types;
+	prpl_info->list_icon = icq_list_icon;
+}
+
+static void
+icyque_protocol_client_iface_init(PurpleProtocolClientIface *prpl_info)
+{
+	//prpl_info->status_text = icyque_status_text;
+	//prpl_info->tooltip_text = icyque_tooltip_text;
+	//prpl_info->buddy_free = icyque_buddy_free;
+ 	//prpl_info->offline_message = icyque_offline_message;
+}
+
+static void
+icyque_protocol_server_iface_init(PurpleProtocolServerIface *prpl_info)
+{
+	//prpl_info->get_info = icyque_get_info;
+	//prpl_info->set_status = icyque_set_status;
+	//prpl_info->set_idle = icyque_set_idle;
+}
+
+static void
+icyque_protocol_privacy_iface_init(PurpleProtocolPrivacyIface *prpl_info)
+{
+	//prpl_info->add_deny = icyque_block_user;
+	//prpl_info->rem_deny = icyque_unblock_user;
+}
+
+static void 
+icyque_protocol_im_iface_init(PurpleProtocolIMIface *prpl_info)
+{
+	prpl_info->send = icq_send_im;
+	prpl_info->send_typing = icq_send_typing;
+}
+
+static void 
+icyque_protocol_chat_iface_init(PurpleProtocolChatIface *prpl_info)
+{
+	//prpl_info->send = icyque_chat_send;
+	//prpl_info->info = icyque_chat_info;
+	//prpl_info->info_defaults = icyque_chat_info_defaults;
+	//prpl_info->join = icyque_join_chat;
+	//prpl_info->get_name = icyque_get_chat_name;
+	//prpl_info->invite = icyque_chat_invite;
+	//prpl_info->set_topic = icyque_chat_set_topic;
+}
+
+static void 
+icyque_protocol_media_iface_init(PurpleProtocolMediaIface *prpl_info)
+{
+	//prpl_info->get_caps = icyque_get_media_caps;
+	//prpl_info->initiate_session = icyque_initiate_media;
+}
+
+static void 
+icyque_protocol_roomlist_iface_init(PurpleProtocolRoomlistIface *prpl_info)
+{
+	//prpl_info->get_list = icyque_roomlist_get_list;
+}
+
+static PurpleProtocol *icyque_protocol;
+
+PURPLE_DEFINE_TYPE_EXTENDED(
+	IcyQueProtocol, icyque_protocol, PURPLE_TYPE_PROTOCOL, 0,
+
+	PURPLE_IMPLEMENT_INTERFACE_STATIC(PURPLE_TYPE_PROTOCOL_IM_IFACE,
+	                                  icyque_protocol_im_iface_init)
+
+	PURPLE_IMPLEMENT_INTERFACE_STATIC(PURPLE_TYPE_PROTOCOL_CHAT_IFACE,
+	                                  icyque_protocol_chat_iface_init)
+
+	PURPLE_IMPLEMENT_INTERFACE_STATIC(PURPLE_TYPE_PROTOCOL_CLIENT_IFACE,
+	                                  icyque_protocol_client_iface_init)
+
+	PURPLE_IMPLEMENT_INTERFACE_STATIC(PURPLE_TYPE_PROTOCOL_SERVER_IFACE,
+	                                  icyque_protocol_server_iface_init)
+
+	PURPLE_IMPLEMENT_INTERFACE_STATIC(PURPLE_TYPE_PROTOCOL_PRIVACY_IFACE,
+	                                  icyque_protocol_privacy_iface_init)
+
+	PURPLE_IMPLEMENT_INTERFACE_STATIC(PURPLE_TYPE_PROTOCOL_MEDIA_IFACE,
+	                                  icyque_protocol_media_iface_init)
+
+	PURPLE_IMPLEMENT_INTERFACE_STATIC(PURPLE_TYPE_PROTOCOL_ROOMLIST_IFACE,
+	                                  icyque_protocol_roomlist_iface_init)
+);
+
+static gboolean
+libpurple3_plugin_load(PurplePlugin *plugin, GError **error)
+{
+	icyque_protocol_register_type(plugin);
+	icyque_protocol = purple_protocols_add(ICYQUE_TYPE_PROTOCOL, error);
+	if (!icyque_protocol)
+		return FALSE;
+
+	return plugin_load(plugin, error);
+}
+
+static gboolean
+libpurple3_plugin_unload(PurplePlugin *plugin, GError **error)
+{
+	if (!plugin_unload(plugin, error))
+		return FALSE;
+
+	if (!purple_protocols_remove(icyque_protocol, error))
+		return FALSE;
+
+	return TRUE;
+}
+
+static PurplePluginInfo *
+plugin_query(GError **error)
+{
+	return purple_plugin_info_new(
+		"id",          "prpl-eionrobb-icyque",
+		"name",        "ICQ (WIM)",
+		"version",     "0.1",
+		"category",    N_("Protocol"),
+		"summary",     N_("ICQ-WIM Protocol Plugin."),
+		"description", N_("Adds ICQ protocol support to libpurple."),
+		"website",     "https://github.com/EionRobb/icyque/",
+		"abi-version", PURPLE_ABI_VERSION,
+		"flags",       PURPLE_PLUGIN_INFO_FLAGS_INTERNAL |
+		               PURPLE_PLUGIN_INFO_FLAGS_AUTO_LOAD,
+		NULL
+	);
+}
+
+PURPLE_PLUGIN_INIT(icyque, plugin_query,
+		libpurple3_plugin_load, libpurple3_plugin_unload);
+
+#endif	
