@@ -588,6 +588,33 @@ icq_chat_invite(PurpleConnection *pc, int id, const char *message, const char *w
 	g_free(uuid);
 }
 
+static void
+icq_join_chat(PurpleConnection *pc, GHashTable *data)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	const gchar *sn;
+	PurpleChatConversation *chatconv;
+	
+	sn = g_hash_table_lookup(data, "sn");
+	if (sn == NULL)
+	{
+		return;
+	}
+	
+	chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
+	if (chatconv != NULL && !purple_chat_conversation_has_left(chatconv)) {
+		purple_conversation_present(PURPLE_CONVERSATION(chatconv));
+		return;
+	}
+	
+	chatconv = purple_serv_got_joined_chat(pc, g_str_hash(sn), sn);
+	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(sn));
+	
+	purple_conversation_present(PURPLE_CONVERSATION(chatconv));
+	
+	//TODO download history and room list members
+}
+
 static int
 icq_send_msg(IcyQueAccount *ia, const gchar *to, const gchar *message)
 {
@@ -796,7 +823,20 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 							JsonArray *members = json_object_get_array_member(memberEvent, "members");
 							//TODO add members to the group chat
 							(void) members;
+							
+						} else if (purple_strequal(memberEventType, "addMembers")) {
+							JsonArray *members = json_object_get_array_member(memberEvent, "members");
+							//TODO add members to the group chat
+							(void) members;
+							
+						} else if (purple_strequal(memberEventType, "delMembers")) {
+							JsonArray *members = json_object_get_array_member(memberEvent, "members");
+							//TODO remove members from the group chat
+							(void) members;
+							
 						}
+						
+						
 					} else if (purple_strequal(mediaType, "text")) {
 						PurpleChatConversation *chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
 						if (chatconv == NULL) {
@@ -1166,7 +1206,7 @@ plugin_init(PurplePlugin *plugin)
 	prpl_info->close = icq_close;
 	prpl_info->send_im = icq_send_im;
 	prpl_info->send_typing = icq_send_typing;
-	// prpl_info->join_chat = icyque_join_chat;
+	prpl_info->join_chat = icq_join_chat;
 	prpl_info->get_chat_name = icq_get_chat_name;
 	// prpl_info->find_blist_chat = icyque_find_chat;
 	prpl_info->chat_invite = icq_chat_invite;
@@ -1294,7 +1334,7 @@ icyque_protocol_chat_iface_init(PurpleProtocolChatIface *prpl_info)
 	prpl_info->send = icq_chat_send;
 	prpl_info->info = icq_chat_info;
 	prpl_info->info_defaults = icq_chat_info_defaults;
-	//prpl_info->join = icyque_join_chat;
+	prpl_info->join = icq_join_chat;
 	prpl_info->get_name = icq_get_chat_name;
 	prpl_info->invite = icq_chat_invite;
 	//prpl_info->set_topic = icyque_chat_set_topic;
