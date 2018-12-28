@@ -508,6 +508,34 @@ icq_add_buddy(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group)
 	icq_add_buddy_with_invite(pc, buddy, group, NULL);
 }
 
+static GList *
+icq_chat_info(PurpleConnection *pc)
+{
+	GList *m = NULL;
+	PurpleProtocolChatEntry *pce;
+
+	pce = g_new0(PurpleProtocolChatEntry, 1);
+	pce->label = _("Group ID");
+	pce->identifier = "sn";
+	pce->required = TRUE;
+	m = g_list_append(m, pce);
+	
+	return m;
+}
+
+static GHashTable *
+icq_chat_info_defaults(PurpleConnection *pc, const char *chatname)
+{
+	GHashTable *defaults = g_hash_table_new_full(g_str_hash, g_str_equal, NULL, g_free);
+	
+	if (chatname != NULL)
+	{
+		g_hash_table_insert(defaults, "sn", g_strdup(chatname));
+	}
+	
+	return defaults;
+}
+
 static int
 icq_send_im(PurpleConnection *pc,
 #if PURPLE_VERSION_CHECK(3, 0, 0)
@@ -673,22 +701,55 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 					msg_flags = PURPLE_MESSAGE_SEND;
 				}
 				
-				if (purple_strequal(mediaType, "text")) {
-					if (msg_flags & PURPLE_MESSAGE_SEND) {
-						PurpleIMConversation *imconv = purple_conversations_find_im_with_account(sn, ia->account);
-						PurpleMessage *msgObj = purple_message_new_outgoing(sn, escaped_text, msg_flags);
-						if (imconv == NULL)
-						{
-							imconv = purple_im_conversation_new(ia->account, sn);
+				if (g_str_has_suffix(sn, "@chat.agent")) {
+					// Group chat
+					JsonObject *chat = json_object_get_object_member(message, "chat");
+					const gchar *sender = json_object_get_string_member(chat, "sender");
+					const gchar *chatName = json_object_get_string_member(chat, "name");
+					JsonObject *memberEvent = json_object_get_object_member(chat, "memberEvent");
+					
+					if (memberEvent != NULL) {
+						const gchar *memberEventType = json_object_get_string_member(memberEvent, "type");
+						if (purple_strequal(memberEventType, "invite")) {
+							JsonArray *members = json_object_get_array_member(memberEvent, "members");
+							//TODO add members to the group chat
+							(void) members;
 						}
-						purple_message_set_time(msgObj, time);
-						purple_conversation_write_message(PURPLE_CONVERSATION(imconv), msgObj);
+					} else if (purple_strequal(mediaType, "text")) {
+						PurpleChatConversation *chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
+						if (chatconv == NULL) {
+							chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(sn), sn);
+							purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(sn));
+							purple_chat_conversation_set_topic(chatconv, NULL, chatName);
+						}
+						
+						purple_serv_got_chat_in(ia->pc, g_str_hash(sn), sender, msg_flags, escaped_text, time);
 						
 					} else {
-						purple_serv_got_im(ia->pc, sn, escaped_text, msg_flags, (time_t) time);
+						purple_debug_warning("icyque", "Unknown chat message mediaType '%s'\n", mediaType);
 					}
+					
 				} else {
-					purple_debug_warning("icyque", "Unknown message mediaType '%s'\n", mediaType);
+					// One-to-one IM
+					if (purple_strequal(mediaType, "text")) {
+							
+							
+							if (msg_flags & PURPLE_MESSAGE_SEND) {
+								PurpleIMConversation *imconv = purple_conversations_find_im_with_account(sn, ia->account);
+								PurpleMessage *msgObj = purple_message_new_outgoing(sn, escaped_text, msg_flags);
+								if (imconv == NULL)
+								{
+									imconv = purple_im_conversation_new(ia->account, sn);
+								}
+								purple_message_set_time(msgObj, time);
+								purple_conversation_write_message(PURPLE_CONVERSATION(imconv), msgObj);
+								
+							} else {
+								purple_serv_got_im(ia->pc, sn, escaped_text, msg_flags, (time_t) time);
+							}
+					} else {
+						purple_debug_warning("icyque", "Unknown IM message mediaType '%s'\n", mediaType);
+					}
 				}
 				
 				g_free(escaped_text);
@@ -723,19 +784,33 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 				const gchar *state = json_object_get_string_member(buddy, "state");
 				const gchar *statusMsg = json_object_get_string_member(buddy, "statusMsg");
 				
-				PurpleBuddy *pbuddy = purple_blist_find_buddy(ia->account, aimId);
-				
-				if (pbuddy == NULL) {
-					const gchar *friendly = json_object_get_string_member(buddy, "friendly");
-					pbuddy = purple_buddy_new(ia->account, aimId, friendly);
+				if (g_str_has_suffix(aimId, "@chat.agent")) {
+					// Group chat
+					PurpleChat *chat = purple_blist_find_chat(ia->account, aimId);
 					
-					purple_blist_add_buddy(pbuddy, NULL, pgroup, NULL);
-				}
-				
-				if (statusMsg != NULL) {
-					purple_protocol_got_user_status(ia->account, aimId, state, "message", statusMsg, NULL);
+					if (chat == NULL) {
+						const gchar *friendly = json_object_get_string_member(buddy, "friendly");
+						chat = purple_chat_new(ia->account, friendly, icq_chat_info_defaults(ia->pc, aimId));
+						
+						purple_blist_add_chat(chat, pgroup, NULL);
+					}
+					
 				} else {
-					purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+					// Buddy
+					PurpleBuddy *pbuddy = purple_blist_find_buddy(ia->account, aimId);
+					
+					if (pbuddy == NULL) {
+						const gchar *friendly = json_object_get_string_member(buddy, "friendly");
+						pbuddy = purple_buddy_new(ia->account, aimId, friendly);
+						
+						purple_blist_add_buddy(pbuddy, NULL, pgroup, NULL);
+					}
+					
+					if (statusMsg != NULL) {
+						purple_protocol_got_user_status(ia->account, aimId, state, "message", statusMsg, NULL);
+					} else {
+						purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+					}
 				}
 			}
 		}
@@ -1003,8 +1078,8 @@ plugin_init(PurplePlugin *plugin)
 	prpl_info->set_status = icq_set_status;
 	// prpl_info->set_idle = icyque_set_idle;
 	prpl_info->status_types = icq_status_types;
-	// prpl_info->chat_info = icyque_chat_info;
-	// prpl_info->chat_info_defaults = icyque_chat_info_defaults;
+	prpl_info->chat_info = icq_chat_info;
+	prpl_info->chat_info_defaults = icq_chat_info_defaults;
 	prpl_info->login = icq_login;
 	prpl_info->close = icq_close;
 	prpl_info->send_im = icq_send_im;
@@ -1135,8 +1210,8 @@ static void
 icyque_protocol_chat_iface_init(PurpleProtocolChatIface *prpl_info)
 {
 	//prpl_info->send = icyque_chat_send;
-	//prpl_info->info = icyque_chat_info;
-	//prpl_info->info_defaults = icyque_chat_info_defaults;
+	prpl_info->info = icq_chat_info;
+	prpl_info->info_defaults = icq_chat_info_defaults;
 	//prpl_info->join = icyque_join_chat;
 	//prpl_info->get_name = icyque_get_chat_name;
 	//prpl_info->invite = icyque_chat_invite;

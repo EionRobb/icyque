@@ -91,6 +91,7 @@ purple_blist_node_set_transient(PurpleBlistNode *node, gboolean transient)
 #define purple_chat_conversation_add_user     purple_conv_chat_add_user
 #define purple_chat_conversation_has_left     purple_conv_chat_has_left
 #define purple_chat_conversation_remove_user  purple_conv_chat_remove_user
+#define purple_chat_conversation_set_topic    purple_conv_chat_set_topic
 
 #define PurpleMessage  PurpleConvMessage
 #define purple_message_set_time(msg, time)  ((msg)->when = (time))
