@@ -487,6 +487,7 @@ icq_add_buddy_with_invite(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup 
 	g_string_append_printf(postdata, "buddy=%s&", purple_url_encode(who));
 	g_string_append(postdata, "f=json&");
 	g_string_append_printf(postdata, "group=%s&", purple_url_encode(group_name));
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
 	g_string_append_printf(postdata, "nick=%s&", purple_url_encode(alias && *alias ? alias : who));
 	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
 	g_string_append(postdata, "preAuthorized=true&");
@@ -550,6 +551,41 @@ icq_get_chat_name(GHashTable *data)
 		return NULL;
 
 	return g_strdup(temp);
+}
+
+static void
+icq_chat_invite(PurpleConnection *pc, int id, const char *message, const char *who)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	GString *postdata = g_string_new(NULL);
+	gchar *uuid = purple_uuid_random();
+	const gchar *url = ICQ_API_SERVER "/mchat/AddChat";
+	PurpleChatConversation *chatconv = purple_conversations_find_chat(pc, id);
+	const gchar *sn = purple_conversation_get_data(PURPLE_CONVERSATION(chatconv), "sn");
+	
+	if (!sn) {
+		sn = purple_conversation_get_name(PURPLE_CONVERSATION(chatconv));
+		g_return_if_fail(sn);
+	}
+	
+	// Needs to be alphabetical
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append_printf(postdata, "chat_id=%s&", purple_url_encode(sn));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append_printf(postdata, "members=%s&", purple_url_encode(who));
+	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
+	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
+	
+	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+	g_free(uuid);
 }
 
 static int
@@ -1133,7 +1169,7 @@ plugin_init(PurplePlugin *plugin)
 	// prpl_info->join_chat = icyque_join_chat;
 	prpl_info->get_chat_name = icq_get_chat_name;
 	// prpl_info->find_blist_chat = icyque_find_chat;
-	// prpl_info->chat_invite = icyque_chat_invite;
+	prpl_info->chat_invite = icq_chat_invite;
 	prpl_info->chat_send = icq_chat_send;
 	// prpl_info->set_chat_topic = icyque_chat_set_topic;
 	// prpl_info->get_cb_real_name = icyque_get_real_name;
@@ -1260,7 +1296,7 @@ icyque_protocol_chat_iface_init(PurpleProtocolChatIface *prpl_info)
 	prpl_info->info_defaults = icq_chat_info_defaults;
 	//prpl_info->join = icyque_join_chat;
 	prpl_info->get_name = icq_get_chat_name;
-	//prpl_info->invite = icyque_chat_invite;
+	prpl_info->invite = icq_chat_invite;
 	//prpl_info->set_topic = icyque_chat_set_topic;
 }
 
