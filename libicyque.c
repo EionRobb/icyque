@@ -630,9 +630,12 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 		PurpleBuddy *pbuddy = purple_blist_find_buddy(ia->account, aimId);
 		if (pbuddy != NULL) {
 			const gchar *buddyIcon = json_object_get_string_member(data, "buddyIcon");
-			g_dataset_set_data_full(pbuddy, "buddyIcon", g_strdup(buddyIcon), g_free);
 			
-			icq_fetch_url_with_method(ia, "GET", buddyIcon, NULL, icq_got_buddy_icon, pbuddy);
+			if (!purple_strequal(purple_buddy_icons_get_checksum_for_user(pbuddy), buddyIcon)) {
+				g_dataset_set_data_full(pbuddy, "buddyIcon", g_strdup(buddyIcon), g_free);
+				
+				icq_fetch_url_with_method(ia, "GET", buddyIcon, NULL, icq_got_buddy_icon, pbuddy);
+			}
 		}
 		
 	} else if (purple_strequal(event_type, "typing")) {
