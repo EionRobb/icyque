@@ -356,13 +356,25 @@ icq_status_types(PurpleAccount *account)
 	GList *types = NULL;
 	PurpleStatusType *status;
 	
-	status = purple_status_type_new_full(PURPLE_STATUS_AVAILABLE, "online", _("Online"), TRUE, TRUE, FALSE);
+	status = purple_status_type_new_with_attrs(PURPLE_STATUS_AVAILABLE, "online", _("Online"), TRUE, TRUE, FALSE, "message", _("Status"), purple_value_new(PURPLE_TYPE_STRING), NULL);
 	types = g_list_append(types, status);
 	
 	status = purple_status_type_new_full(PURPLE_STATUS_OFFLINE, "offline", _("Offline"), TRUE, TRUE, FALSE);
 	types = g_list_append(types, status);
 
 	return types;
+}
+
+static gchar *
+icq_status_text(PurpleBuddy *buddy)
+{
+	const gchar *message = purple_status_get_attr_string(purple_presence_get_active_status(purple_buddy_get_presence(buddy)), "message");
+	
+	if (message == NULL) {
+		return NULL;
+	}
+	
+	return g_markup_printf_escaped("%s", message);
 }
 
 
@@ -550,8 +562,13 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 	if (purple_strequal(event_type, "presence")) {
 		const gchar *aimId = json_object_get_string_member(data, "aimId");
 		const gchar *state = json_object_get_string_member(data, "state");
+		const gchar *statusMsg = json_object_get_string_member(data, "statusMsg");
 		
-		purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+		if (statusMsg != NULL) {
+			purple_protocol_got_user_status(ia->account, aimId, state, "message", statusMsg, NULL);
+		} else {
+			purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+		}
 		
 		PurpleBuddy *pbuddy = purple_blist_find_buddy(ia->account, aimId);
 		if (pbuddy != NULL) {
@@ -625,6 +642,8 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 				JsonObject *buddy = json_array_get_object_element(buddies, j);
 				const gchar *aimId = json_object_get_string_member(buddy, "aimId");
 				const gchar *state = json_object_get_string_member(buddy, "state");
+				const gchar *statusMsg = json_object_get_string_member(buddy, "statusMsg");
+				
 				PurpleBuddy *pbuddy = purple_blist_find_buddy(ia->account, aimId);
 				
 				if (pbuddy == NULL) {
@@ -634,7 +653,11 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 					purple_blist_add_buddy(pbuddy, NULL, pgroup, NULL);
 				}
 				
-				purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+				if (statusMsg != NULL) {
+					purple_protocol_got_user_status(ia->account, aimId, state, "message", statusMsg, NULL);
+				} else {
+					purple_protocol_got_user_status(ia->account, aimId, state, NULL);
+				}
 			}
 		}
 		
@@ -895,7 +918,7 @@ plugin_init(PurplePlugin *plugin)
 
 	// prpl_info->get_account_text_table = icyque_get_account_text_table;
 	// prpl_info->list_emblem = icyque_list_emblem;
-	// prpl_info->status_text = icyque_status_text;
+	prpl_info->status_text = icq_status_text;
 	// prpl_info->tooltip_text = icyque_tooltip_text;
 	prpl_info->list_icon = icq_list_icon;
 	// prpl_info->set_status = icyque_set_status;
@@ -1000,7 +1023,7 @@ icyque_protocol_class_init(PurpleProtocolClass *prpl_info)
 static void
 icyque_protocol_client_iface_init(PurpleProtocolClientIface *prpl_info)
 {
-	//prpl_info->status_text = icyque_status_text;
+	prpl_info->status_text = icq_status_text;
 	//prpl_info->tooltip_text = icyque_tooltip_text;
 	//prpl_info->buddy_free = icyque_buddy_free;
  	//prpl_info->offline_message = icyque_offline_message;
