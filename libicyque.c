@@ -536,19 +536,25 @@ icq_chat_info_defaults(PurpleConnection *pc, const char *chatname)
 	return defaults;
 }
 
-static int
-icq_send_im(PurpleConnection *pc,
-#if PURPLE_VERSION_CHECK(3, 0, 0)
-				PurpleMessage *msg)
+static gchar *
+icq_get_chat_name(GHashTable *data)
 {
-	const gchar *who = purple_message_get_recipient(msg);
-	const gchar *message = purple_message_get_contents(msg);
-#else
-				const gchar *who, const gchar *message, PurpleMessageFlags flags)
-{
-#endif
+	gchar *temp;
+
+	if (data == NULL)
+		return NULL;
 	
-	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	temp = g_hash_table_lookup(data, "sn");
+
+	if (temp == NULL)
+		return NULL;
+
+	return g_strdup(temp);
+}
+
+static int
+icq_send_msg(IcyQueAccount *ia, const gchar *to, const gchar *message)
+{
 	GString *postdata = g_string_new(NULL);
 	gchar *stripped = purple_markup_strip_html(message);
 	gchar *uuid = purple_uuid_random();
@@ -563,7 +569,7 @@ icq_send_im(PurpleConnection *pc,
 	g_string_append_printf(postdata, "message=%s&", purple_url_encode(stripped));
 	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
 	g_string_append(postdata, "offlineIM=true&");
-	g_string_append_printf(postdata, "t=%s&", purple_url_encode(who));
+	g_string_append_printf(postdata, "t=%s&", purple_url_encode(to));
 	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
 	
 	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
@@ -577,9 +583,49 @@ icq_send_im(PurpleConnection *pc,
 	g_free(uuid);
 	
 	return 1;
+}	
+
+static int
+icq_send_im(PurpleConnection *pc,
+#if PURPLE_VERSION_CHECK(3, 0, 0)
+				PurpleMessage *msg)
+{
+	const gchar *who = purple_message_get_recipient(msg);
+	const gchar *message = purple_message_get_contents(msg);
+#else
+				const gchar *who, const gchar *message, PurpleMessageFlags flags)
+{
+#endif
+	
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	
+	return icq_send_msg(ia, who, message);
 }
 
-guint
+static gint
+icq_chat_send(PurpleConnection *pc, gint id, 
+#if PURPLE_VERSION_CHECK(3, 0, 0)
+PurpleMessage *msg)
+{
+	const gchar *message = purple_message_get_contents(msg);
+#else
+const gchar *message, PurpleMessageFlags flags)
+{
+#endif
+	
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	PurpleChatConversation *chatconv = purple_conversations_find_chat(pc, id);
+	const gchar *sn = purple_conversation_get_data(PURPLE_CONVERSATION(chatconv), "sn");
+	
+	if (!sn) {
+		sn = purple_conversation_get_name(PURPLE_CONVERSATION(chatconv));
+		g_return_val_if_fail(sn, -1);
+	}
+	
+	return icq_send_msg(ia, sn, message);
+}
+
+static guint
 icq_send_typing(PurpleConnection *pc, const gchar *who, PurpleIMTypingState state)
 {
 	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
@@ -1060,7 +1106,7 @@ plugin_init(PurplePlugin *plugin)
 	prpl_info->add_buddy_with_invite = icq_add_buddy_with_invite;
 #endif
 
-	// prpl_info->options = OPT_PROTO_CHAT_TOPIC | OPT_PROTO_SLASH_COMMANDS_NATIVE | OPT_PROTO_UNIQUE_CHATNAME;
+	prpl_info->options = OPT_PROTO_CHAT_TOPIC | OPT_PROTO_INVITE_MESSAGE;
 	// prpl_info->protocol_options = icyque_add_account_options(prpl_info->protocol_options);
 	prpl_info->icon_spec.format = "png,gif,jpeg";
 	prpl_info->icon_spec.min_width = 0;
@@ -1085,10 +1131,10 @@ plugin_init(PurplePlugin *plugin)
 	prpl_info->send_im = icq_send_im;
 	prpl_info->send_typing = icq_send_typing;
 	// prpl_info->join_chat = icyque_join_chat;
-	// prpl_info->get_chat_name = icyque_get_chat_name;
+	prpl_info->get_chat_name = icq_get_chat_name;
 	// prpl_info->find_blist_chat = icyque_find_chat;
 	// prpl_info->chat_invite = icyque_chat_invite;
-	// prpl_info->chat_send = icyque_chat_send;
+	prpl_info->chat_send = icq_chat_send;
 	// prpl_info->set_chat_topic = icyque_chat_set_topic;
 	// prpl_info->get_cb_real_name = icyque_get_real_name;
 	prpl_info->add_buddy = icq_add_buddy;
@@ -1209,11 +1255,11 @@ icyque_protocol_im_iface_init(PurpleProtocolIMIface *prpl_info)
 static void 
 icyque_protocol_chat_iface_init(PurpleProtocolChatIface *prpl_info)
 {
-	//prpl_info->send = icyque_chat_send;
+	prpl_info->send = icq_chat_send;
 	prpl_info->info = icq_chat_info;
 	prpl_info->info_defaults = icq_chat_info_defaults;
 	//prpl_info->join = icyque_join_chat;
-	//prpl_info->get_name = icyque_get_chat_name;
+	prpl_info->get_name = icq_get_chat_name;
 	//prpl_info->invite = icyque_chat_invite;
 	//prpl_info->set_topic = icyque_chat_set_topic;
 }
