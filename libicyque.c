@@ -602,22 +602,41 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 		for (i = 0; i < len; i++) {
 			JsonObject *message = json_array_get_object_element(messages, i);
 			gint64 time = json_object_get_int_member(message, "time");
-			const gchar *mediaType = json_object_get_string_member(message, "mediaType");
-			const gchar *text = json_object_get_string_member(message, "text");
-			PurpleMessageFlags msg_flags = PURPLE_MESSAGE_RECV;
-			gchar *escaped_text = purple_markup_escape_text(text, -1);
 			
-			if (json_object_get_boolean_member(message, "outgoing")) {
-				msg_flags = PURPLE_MESSAGE_SEND;
+			if (ia->last_message_timestamp && time > ia->last_message_timestamp) {
+				const gchar *mediaType = json_object_get_string_member(message, "mediaType");
+				const gchar *text = json_object_get_string_member(message, "text");
+				PurpleMessageFlags msg_flags = PURPLE_MESSAGE_RECV;
+				gchar *escaped_text = purple_markup_escape_text(text, -1);
+				
+				if (json_object_get_boolean_member(message, "outgoing")) {
+					msg_flags = PURPLE_MESSAGE_SEND;
+				}
+				
+				if (purple_strequal(mediaType, "text")) {
+					if (msg_flags & PURPLE_MESSAGE_SEND) {
+						PurpleIMConversation *imconv = purple_conversations_find_im_with_account(sn, ia->account);
+						PurpleMessage *msgObj = purple_message_new_outgoing(sn, escaped_text, msg_flags);
+						if (imconv == NULL)
+						{
+							imconv = purple_im_conversation_new(ia->account, sn);
+						}
+						purple_message_set_time(msgObj, time);
+						purple_conversation_write_message(PURPLE_CONVERSATION(imconv), msgObj);
+						
+					} else {
+						purple_serv_got_im(ia->pc, sn, escaped_text, msg_flags, (time_t) time);
+					}
+				} else {
+					purple_debug_warning("icyque", "Unknown message mediaType '%s'\n", mediaType);
+				}
+				
+				g_free(escaped_text);
 			}
 			
-			if (purple_strequal(mediaType, "text")) {
-				purple_serv_got_im(ia->pc, sn, escaped_text, msg_flags, (time_t) time);
-			} else {
-				purple_debug_warning("icyque", "Unknown message mediaType '%s'\n", mediaType);
-			}
-			
-			g_free(escaped_text);
+			ia->last_message_timestamp = MAX(ia->last_message_timestamp, time);
+			purple_account_set_int(ia->account, "last_message_timestamp_high", ia->last_message_timestamp >> 32);
+			purple_account_set_int(ia->account, "last_message_timestamp_low", ia->last_message_timestamp & 0xFFFFFFFF);
 		}
 		
 	} else if (purple_strequal(event_type, "userAddedToBuddyList")) {
