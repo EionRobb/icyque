@@ -527,6 +527,96 @@ icq_add_buddy(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group)
 	icq_add_buddy_with_invite(pc, buddy, group, NULL);
 }
 
+static void
+icq_remove_buddy_by_name(IcyQueAccount *ia, const gchar *who)
+{
+	GString *postdata = g_string_new(NULL);
+	const gchar *url = ICQ_API_SERVER "/buddylist/removeBuddy";
+	gchar *uuid = purple_uuid_random();
+	
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append(postdata, "allGroups=true&");
+	g_string_append_printf(postdata, "buddy=%s&", purple_url_encode(who));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
+	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
+	
+	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+	g_free(uuid);
+}
+
+// static void
+// icq_remove_buddy(PurpleConnection *connection, PurpleBuddy *buddy, PurpleGroup *group)
+// {
+	// IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	// const gchar *buddy_name = purple_buddy_get_name(buddy);
+	
+	// icq_remove_buddy_by_name(ia, buddy_name);
+// }
+
+static void 
+icq_chat_leave(PurpleConnection *pc, int id)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	const gchar *sn;
+	PurpleChatConversation *chatconv;
+	
+	chatconv = purple_conversations_find_chat(pc, id);
+	sn = purple_conversation_get_data(PURPLE_CONVERSATION(chatconv), "sn");
+	if (sn == NULL) {
+		sn = purple_conversation_get_name(PURPLE_CONVERSATION(chatconv));
+		g_return_if_fail(sn);
+	}
+	
+	return icq_remove_buddy_by_name(ia, sn);
+}
+
+static void
+icq_chat_kick(PurpleConnection *pc, int id, const gchar *who)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	const gchar *sn;
+	PurpleChatConversation *chatconv;
+	
+	chatconv = purple_conversations_find_chat(pc, id);
+	sn = purple_conversation_get_data(PURPLE_CONVERSATION(chatconv), "sn");
+	if (sn == NULL) {
+		sn = purple_conversation_get_name(PURPLE_CONVERSATION(chatconv));
+		g_return_if_fail(sn);
+	}
+	
+	GString *postdata = g_string_new(NULL);
+	gchar *uuid = purple_uuid_random();
+	const gchar *url = ICQ_API_SERVER "/mchat/DelMembers";
+	
+	// Needs to be alphabetical
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append_printf(postdata, "chat_id=%s&", purple_url_encode(sn));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append_printf(postdata, "members=%s&", purple_url_encode(who));
+	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
+	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
+	
+	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+	g_free(uuid);
+}
+
 static GList *
 icq_chat_info(PurpleConnection *pc)
 {
@@ -1141,9 +1231,53 @@ icq_close(PurpleConnection *pc)
 	g_free(ia);
 }
 
+static PurpleCmdRet
+icq_cmd_leave(PurpleConversation *conv, const gchar *cmd, gchar **args, gchar **error, void *data)
+{
+	PurpleConnection *pc = NULL;
+	int id = -1;
+	
+	pc = purple_conversation_get_connection(conv);
+	id = purple_chat_conversation_get_id(PURPLE_CHAT_CONVERSATION(conv));
+	
+	if (pc == NULL || id == -1)
+		return PURPLE_CMD_RET_FAILED;
+	
+	icq_chat_leave(pc, id);
+	
+	return PURPLE_CMD_RET_OK;
+}
+
+static PurpleCmdRet
+icq_cmd_kick(PurpleConversation *conv, const gchar *cmd, gchar **args, gchar **error, void *data)
+{
+	PurpleConnection *pc = NULL;
+	int id = -1;
+	
+	pc = purple_conversation_get_connection(conv);
+	id = purple_chat_conversation_get_id(PURPLE_CHAT_CONVERSATION(conv));
+	
+	if (pc == NULL || id == -1)
+		return PURPLE_CMD_RET_FAILED;
+	
+	icq_chat_kick(pc, id, args[0]);
+	
+	return PURPLE_CMD_RET_OK;
+}
+
 static gboolean
 plugin_load(PurplePlugin *plugin, GError **error)
 {
+	purple_cmd_register("leave", "", PURPLE_CMD_P_PLUGIN, PURPLE_CMD_FLAG_CHAT |
+						PURPLE_CMD_FLAG_PROTOCOL_ONLY | PURPLE_CMD_FLAG_ALLOW_WRONG_ARGS,
+						"prpl-eionrobb-icyque", icq_cmd_leave,
+						_("leave:  Leave the group chat"), NULL);
+						
+	purple_cmd_register("kick", "s", PURPLE_CMD_P_PLUGIN, PURPLE_CMD_FLAG_CHAT |
+						PURPLE_CMD_FLAG_PROTOCOL_ONLY | PURPLE_CMD_FLAG_ALLOW_WRONG_ARGS,
+						"prpl-eionrobb-icyque", icq_cmd_kick,
+						_("kick <user>:  Kick a user from the room."), NULL);
+	
 	return TRUE;
 }
 
