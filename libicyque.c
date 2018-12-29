@@ -1106,7 +1106,7 @@ icq_session_start(IcyQueAccount *ia)
 	g_string_append(postdata, "language=en-US&");
 	g_string_append(postdata, "rawMsg=0&");
 	g_string_append(postdata, "sessionTimeout=31536000&");
-	g_string_append(postdata, "sig_sha256_force=1&");
+	//g_string_append(postdata, "sig_sha256_force=1&");
 	g_string_append_printf(postdata, "ts=%d&", (int) time(NULL));
 	g_string_append(postdata, "view=online"); //todo mobile?
 	
