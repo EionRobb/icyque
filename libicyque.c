@@ -80,6 +80,7 @@ typedef struct {
 	
 	guint heartbeat_timeout;
 	PurpleHttpKeepalivePool *keepalive_pool;
+	gchar *last_fetchBaseURL;
 } IcyQueAccount;
 
 
@@ -1122,6 +1123,11 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 static void
 icq_fetch_events_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 {
+	if (obj == NULL) {
+		icq_fetch_url_with_method(ia, "GET", ia->last_fetchBaseURL, NULL, icq_fetch_events_cb, NULL);
+		return;
+	}
+	
 	JsonObject *response = json_object_get_object_member(obj, "response");
 	JsonObject *data = json_object_get_object_member(response, "data");
 	
@@ -1136,6 +1142,9 @@ icq_fetch_events_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 		icq_process_event(ia, type, eventData);
 	}
 	
+	g_free(ia->last_fetchBaseURL);
+	ia->last_fetchBaseURL = g_strdup(fetchBaseURL);
+	
 	icq_fetch_url_with_method(ia, "GET", fetchBaseURL, NULL, icq_fetch_events_cb, NULL);
 }
 
@@ -1149,6 +1158,7 @@ icq_session_start_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 	const gchar *fetchBaseURL = json_object_get_string_member(data, "fetchBaseURL");
 	
 	ia->aimsid = g_strdup(aimsid);
+	ia->last_fetchBaseURL = g_strdup(fetchBaseURL);
 	
 	purple_connection_set_state(ia->pc, PURPLE_CONNECTION_CONNECTED);
 	
@@ -1295,6 +1305,7 @@ icq_close(PurpleConnection *pc)
 	g_hash_table_destroy(ia->user_ids);
 	ia->user_ids = NULL;
 	
+	g_free(ia->last_fetchBaseURL);
 	g_free(ia->token);
 	g_free(ia->session_key);
 	g_free(ia->aimsid);
