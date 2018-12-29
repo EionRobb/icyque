@@ -488,6 +488,77 @@ icq_unblock_user(PurpleConnection *pc, const char *who)
 }
 
 static void
+icq_got_user_info(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	if (obj == NULL) {
+		return;
+	}
+	
+	JsonObject *response = json_object_get_object_member(obj, "response");
+	JsonObject *data = json_object_get_object_member(response, "data");
+	JsonArray *infoArray = json_object_get_array_member(data, "infoArray");
+	guint len = json_array_get_length(infoArray);
+	
+	if (!infoArray || !len) {
+		return;
+	}
+	
+	JsonObject *info = json_array_get_object_element(infoArray, 0);
+	JsonObject *profile = json_object_get_object_member(info, "profile");
+	
+	if (profile == NULL) {
+		return;
+	}
+	
+	const gchar *aimId = json_object_get_string_member(profile, "aimId");
+	if (aimId == NULL) {
+		return;
+	}
+	
+	PurpleNotifyUserInfo *user_info = purple_notify_user_info_new();
+	
+	purple_notify_user_info_add_pair_html(user_info, _("ID"), aimId);
+	
+	purple_notify_user_info_add_pair_html(user_info, _("First name"), 
+		json_object_get_string_member(profile, "firstName"));
+	purple_notify_user_info_add_pair_html(user_info, _("Last name"), 
+		json_object_get_string_member(profile, "lastName"));
+	purple_notify_user_info_add_pair_html(user_info, _("Gender"), 
+		json_object_get_string_member(profile, "gender"));
+	purple_notify_user_info_add_pair_html(user_info, _("Alias"), 
+		json_object_get_string_member(profile, "friendlyName"));
+	
+	
+	purple_notify_userinfo(ia->pc, aimId, user_info, NULL, NULL);
+}
+
+static void
+icq_get_info(PurpleConnection *pc, const gchar *who)
+{
+	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+	GString *postdata = g_string_new(NULL);
+	const gchar *url = ICQ_API_SERVER "/memberDir/get";
+	gchar *uuid = purple_uuid_random();
+	
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append(postdata, "f=json&");
+	g_string_append(postdata, "infoLevel=full&");
+	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
+	g_string_append_printf(postdata, "t=%s&", purple_url_encode(who));
+	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
+	
+	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, icq_got_user_info, NULL);
+	
+	g_string_free(postdata, TRUE);
+	g_free(uuid);
+}
+
+static void
 icq_add_buddy_with_invite(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group, const char *message)
 {
 	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
@@ -1369,7 +1440,7 @@ plugin_init(PurplePlugin *plugin)
 	// prpl_info->remove_buddy = icyque_buddy_remove;
 	// prpl_info->group_buddy = icyque_fake_group_buddy;
 	// prpl_info->rename_group = icyque_fake_group_rename;
-	//prpl_info->get_info = icq_get_info;
+	prpl_info->get_info = icq_get_info;
 	prpl_info->add_deny = icq_block_user;
 	prpl_info->rem_deny = icq_unblock_user;
 
@@ -1460,7 +1531,7 @@ icyque_protocol_client_iface_init(PurpleProtocolClientIface *prpl_info)
 static void
 icyque_protocol_server_iface_init(PurpleProtocolServerIface *prpl_info)
 {
-	//prpl_info->get_info = icyque_get_info;
+	prpl_info->get_info = icq_get_info;
 	prpl_info->set_status = icq_set_status;
 	//prpl_info->set_idle = icyque_set_idle;
 	prpl_info->add_buddy = icq_add_buddy_with_invite;
