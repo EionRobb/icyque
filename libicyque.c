@@ -384,6 +384,25 @@ icq_status_text(PurpleBuddy *buddy)
 }
 
 static void
+icq_tooltip_text(PurpleBuddy *buddy, PurpleNotifyUserInfo *user_info, gboolean full)
+{
+	PurplePresence *presence;
+	PurpleStatus *status;
+	const gchar *message;
+	
+	g_return_if_fail(buddy != NULL);
+	
+	presence = purple_buddy_get_presence(buddy);
+	status = purple_presence_get_active_status(presence);
+	purple_notify_user_info_add_pair_html(user_info, _("Status"), purple_status_get_name(status));
+	
+	message = purple_status_get_attr_string(status, "message");
+	if (message != NULL) {
+		purple_notify_user_info_add_pair_html(user_info, _("Message"), message);
+	}
+}
+
+static void
 icq_set_status(PurpleAccount *account, PurpleStatus *status)
 {
 	PurpleConnection *pc = purple_account_get_connection(account);
@@ -410,28 +429,27 @@ icq_set_status(PurpleAccount *account, PurpleStatus *status)
 	g_string_free(postdata, TRUE);
 	g_free(uuid);
 	
-	const gchar *message = purple_status_get_attr_string(status, "message");
-	if (message && *message) {
-		uuid = purple_uuid_random();
-		postdata = g_string_new(NULL);
-		url = ICQ_API_SERVER "/presence/setStatus";
-		
-		g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
-		g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
-		g_string_append(postdata, "f=json&");
-		g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
-		g_string_append_printf(postdata, "statusMsg=%s&", purple_url_encode(message));
-		g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
 	
-		sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
-		g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
-		g_free(sig_sha256);
-		
-		icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
-		
-		g_string_free(postdata, TRUE);
-		g_free(uuid);
-	}
+	const gchar *message = purple_status_get_attr_string(status, "message");
+	uuid = purple_uuid_random();
+	postdata = g_string_new(NULL);
+	url = ICQ_API_SERVER "/presence/setStatus";
+	
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
+	g_string_append(postdata, "f=json&");
+	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
+	g_string_append_printf(postdata, "statusMsg=%s&", purple_url_encode(message ? message : ""));
+	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
+
+	sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	
+	g_string_free(postdata, TRUE);
+	g_free(uuid);
 }
 
 
@@ -1195,7 +1213,7 @@ plugin_init(PurplePlugin *plugin)
 	// prpl_info->get_account_text_table = icyque_get_account_text_table;
 	// prpl_info->list_emblem = icyque_list_emblem;
 	prpl_info->status_text = icq_status_text;
-	// prpl_info->tooltip_text = icyque_tooltip_text;
+	prpl_info->tooltip_text = icq_tooltip_text;
 	prpl_info->list_icon = icq_list_icon;
 	prpl_info->set_status = icq_set_status;
 	// prpl_info->set_idle = icyque_set_idle;
@@ -1300,7 +1318,7 @@ static void
 icyque_protocol_client_iface_init(PurpleProtocolClientIface *prpl_info)
 {
 	prpl_info->status_text = icq_status_text;
-	//prpl_info->tooltip_text = icyque_tooltip_text;
+	prpl_info->tooltip_text = icq_tooltip_text;
 	//prpl_info->buddy_free = icyque_buddy_free;
  	//prpl_info->offline_message = icyque_offline_message;
 }
