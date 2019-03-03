@@ -16,4 +16,5 @@ Requires devel headers/libs for libpurple and libjson-glib [libglib2.0-dev, libj
 
 ## Windows install ##
 Download nightly builds of [libicyque.dll](https://eion.robbmob.com/libicyque.dll) and copy into your C:\Program Files (x86)\Pidgin\plugins\ folder
+If you haven't used one of my other plugins before, you'll need [libjson-glib-1.0.dll](https://eion.robbmob.com/libjson-glib-1.0.dll) in your C:\Program Files (x86)\Pidgin\ (not plugins!) folder
 
