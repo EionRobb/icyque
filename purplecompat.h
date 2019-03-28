@@ -83,15 +83,17 @@ purple_blist_node_set_transient(PurpleBlistNode *node, gboolean transient)
 #define purple_conversations_find_im_with_account(name, account)  \
 		PURPLE_CONV_IM(purple_find_conversation_with_account(PURPLE_CONV_TYPE_IM, name, account))
 #define purple_im_conversation_new(account, from) PURPLE_CONV_IM(purple_conversation_new(PURPLE_CONV_TYPE_IM, account, from))
-#define PURPLE_CONVERSATION(chatorim)         ((chatorim) == NULL ? NULL : (chatorim)->conv)
-#define PURPLE_IM_CONVERSATION(conv)          PURPLE_CONV_IM(conv)
-#define PURPLE_CHAT_CONVERSATION(conv)        PURPLE_CONV_CHAT(conv)
-#define PURPLE_IS_IM_CONVERSATION(conv)       (purple_conversation_get_type(conv) == PURPLE_CONV_TYPE_IM)
-#define PURPLE_IS_CHAT_CONVERSATION(conv)     (purple_conversation_get_type(conv) == PURPLE_CONV_TYPE_CHAT)
-#define purple_chat_conversation_add_user     purple_conv_chat_add_user
-#define purple_chat_conversation_has_left     purple_conv_chat_has_left
-#define purple_chat_conversation_remove_user  purple_conv_chat_remove_user
-#define purple_chat_conversation_set_topic    purple_conv_chat_set_topic
+#define PURPLE_CONVERSATION(chatorim)          ((chatorim) == NULL ? NULL : (chatorim)->conv)
+#define PURPLE_IM_CONVERSATION(conv)           PURPLE_CONV_IM(conv)
+#define PURPLE_CHAT_CONVERSATION(conv)         PURPLE_CONV_CHAT(conv)
+#define PURPLE_IS_IM_CONVERSATION(conv)        (purple_conversation_get_type(conv) == PURPLE_CONV_TYPE_IM)
+#define PURPLE_IS_CHAT_CONVERSATION(conv)      (purple_conversation_get_type(conv) == PURPLE_CONV_TYPE_CHAT)
+#define purple_chat_conversation_add_user      purple_conv_chat_add_user
+#define purple_chat_conversation_add_users     purple_conv_chat_add_users
+#define purple_chat_conversation_has_left      purple_conv_chat_has_left
+#define purple_chat_conversation_remove_user   purple_conv_chat_remove_user
+#define purple_chat_conversation_remove_users  purple_conv_chat_remove_users
+#define purple_chat_conversation_set_topic     purple_conv_chat_set_topic
 
 #define PurpleMessage  PurpleConvMessage
 #define purple_message_set_time(msg, time)  ((msg)->when = (time))

@@ -1024,22 +1024,51 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 					JsonObject *memberEvent = json_object_get_object_member(chat, "memberEvent");
 					
 					if (memberEvent != NULL) {
+						PurpleChatConversation *chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
 						const gchar *memberEventType = json_object_get_string_member(memberEvent, "type");
-						if (purple_strequal(memberEventType, "invite")) {
+						if (purple_strequal(memberEventType, "invite") || purple_strequal(memberEventType, "addMembers")) {
 							JsonArray *members = json_object_get_array_member(memberEvent, "members");
-							//TODO add members to the group chat
-							(void) members;
+							//add members to the group chat
+							const gchar *role = json_object_get_string_member(memberEvent, "role");
+							PurpleChatUserFlags cbflags = PURPLE_CHAT_USER_NONE;
+							if (purple_strequal(role, "admin")) {
+								cbflags = PURPLE_CHAT_USER_OP;
+							} else if (purple_strequal(role, "moder")) {
+								cbflags = PURPLE_CHAT_USER_HALFOP;
+							}
 							
-						} else if (purple_strequal(memberEventType, "addMembers")) {
-							JsonArray *members = json_object_get_array_member(memberEvent, "members");
-							//TODO add members to the group chat
-							(void) members;
+							GList *users = NULL, *flags = NULL;
+							int j;
+							for (j = json_array_get_length(members) - 1; j >= 0; j--) {
+								const gchar *member = json_array_get_string_element(members, j);
+								
+								users = g_list_prepend(users, g_strdup(member));
+								flags = g_list_prepend(flags, GINT_TO_POINTER(cbflags));
+							}
+							
+							purple_chat_conversation_add_users(chatconv, users, NULL, flags, TRUE);
+							while (users != NULL) {
+								g_free(users->data);
+								users = g_list_delete_link(users, users);
+							}
+							g_list_free(flags);
 							
 						} else if (purple_strequal(memberEventType, "delMembers")) {
 							JsonArray *members = json_object_get_array_member(memberEvent, "members");
-							//TODO remove members from the group chat
-							(void) members;
+							//remove members from the group chat
+							GList *users = NULL;
+							int j;
+							for (j = json_array_get_length(members) - 1; j >= 0; j--) {
+								const gchar *member = json_array_get_string_element(members, j);
+								
+								users = g_list_prepend(users, g_strdup(member));
+							}
 							
+							purple_chat_conversation_remove_users(chatconv, users, NULL);
+							while (users != NULL) {
+								g_free(users->data);
+								users = g_list_delete_link(users, users);
+							}
 						}
 						
 						
