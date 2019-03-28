@@ -928,10 +928,14 @@ icq_got_buddy_icon(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 	g_dataset_destroy(buddy);
 }
 
+static GList *valid_icyque_accounts = NULL;
+#define ICYQUE_ACCOUNT_IS_VALID(ia) (g_list_find(valid_icyque_accounts, (ia)) != NULL)
+
 static void
 icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 {
 	if (event_type == NULL) return;
+	if (!ICYQUE_ACCOUNT_IS_VALID(ia)) return;
 	
 	if (purple_strequal(event_type, "presence")) {
 		const gchar *aimId = json_object_get_string_member(data, "aimId");
@@ -1123,6 +1127,8 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 static void
 icq_fetch_events_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 {
+	if (!ICYQUE_ACCOUNT_IS_VALID(ia)) return;
+	
 	if (obj == NULL) {
 		icq_fetch_url_with_method(ia, "GET", ia->last_fetchBaseURL, NULL, icq_fetch_events_cb, NULL);
 		return;
@@ -1151,6 +1157,8 @@ icq_fetch_events_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 static void
 icq_session_start_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 {
+	if (!ICYQUE_ACCOUNT_IS_VALID(ia)) return;
+	
 	JsonObject *response = json_object_get_object_member(obj, "response");
 	JsonObject *data = json_object_get_object_member(response, "data");
 	
@@ -1168,6 +1176,8 @@ icq_session_start_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 static void
 icq_session_start(IcyQueAccount *ia)
 {
+	if (!ICYQUE_ACCOUNT_IS_VALID(ia)) return;
+	
 	const gchar *url = ICQ_API_SERVER "/aim/startSession";
 	GString *postdata = g_string_new(NULL);
 	
@@ -1254,6 +1264,8 @@ icq_login(PurpleAccount *account)
 		ia->last_message_timestamp = (ia->last_message_timestamp << 32) | ((guint64) purple_account_get_int(account, "last_message_timestamp_low", 0) & 0xFFFFFFFF);
 	}
 	
+	valid_icyque_accounts = g_list_append(valid_icyque_accounts, ia);
+	
 	
 	if (ia->token == NULL) {
 		GString *postdata = g_string_new(NULL);
@@ -1288,6 +1300,8 @@ icq_close(PurpleConnection *pc)
 	if (ia->heartbeat_timeout) {
 		g_source_remove(ia->heartbeat_timeout);
 	}
+	
+	valid_icyque_accounts = g_list_remove(valid_icyque_accounts, ia);
 	
 	while (ia->http_conns) {
 		purple_http_conn_cancel(ia->http_conns->data);
