@@ -77,6 +77,7 @@ typedef struct {
 	GSList *http_conns; /**< PurpleHttpConnection to be cancelled on logout */
 	gchar *device_id;
 	gint64 last_message_timestamp;
+	GHashTable *sent_messages_hash;
 	
 	guint heartbeat_timeout;
 	PurpleHttpKeepalivePool *keepalive_pool;
@@ -795,6 +796,20 @@ icq_join_chat(PurpleConnection *pc, GHashTable *data)
 	//TODO download history and room list members
 }
 
+static void
+icq_sent_msg(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	JsonObject *response = json_object_get_object_member(obj, "response");
+	JsonObject *data = json_object_get_object_member(response, "data");
+	const gchar *msgId = json_object_get_string_member(data, "msgId");
+	
+	if (msgId != NULL) {
+		gchar *id = g_strdup(msgId);
+		g_hash_table_replace(ia->sent_messages_hash, id, id);
+	}
+	
+}
+
 static int
 icq_send_msg(IcyQueAccount *ia, const gchar *to, const gchar *message)
 {
@@ -819,7 +834,7 @@ icq_send_msg(IcyQueAccount *ia, const gchar *to, const gchar *message)
 	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
 	g_free(sig_sha256);
 	
-	icq_fetch_url_with_method(ia, "POST", url, postdata->str, NULL /*TODO*/, NULL);
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, icq_sent_msg, NULL);
 	
 	g_string_free(postdata, TRUE);
 	g_free(stripped);
@@ -988,11 +1003,18 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 				const gchar *mediaType = json_object_get_string_member(message, "mediaType");
 				const gchar *text = json_object_get_string_member(message, "text");
 				PurpleMessageFlags msg_flags = PURPLE_MESSAGE_RECV;
-				gchar *escaped_text = purple_markup_escape_text(text, -1);
 				
 				if (json_object_get_boolean_member(message, "outgoing")) {
 					msg_flags = PURPLE_MESSAGE_SEND;
+					
+					const gchar *wid = json_object_get_string_member(message, "wid");
+					if (g_hash_table_remove(ia->sent_messages_hash, wid)) {
+						// We sent this message from Pidgin
+						continue;
+					}
 				}
+				
+				gchar *escaped_text = purple_markup_escape_text(text, -1);
 				
 				if (g_str_has_suffix(sn, "@chat.agent")) {
 					// Group chat
@@ -1247,6 +1269,7 @@ icq_login(PurpleAccount *account)
 	ia->pc = pc;
 	ia->cookie_table = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
 	ia->user_ids = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, g_free);
+	ia->sent_messages_hash = g_hash_table_new_full(g_str_hash, g_str_equal, g_free, NULL);
 	ia->device_id = g_strdup(purple_account_get_string(ia->account, "device_id", NULL));
 	ia->keepalive_pool = purple_http_keepalive_pool_new();
 	ia->token = g_strdup(purple_account_get_string(ia->account, "token", NULL));
@@ -1316,6 +1339,8 @@ icq_close(PurpleConnection *pc)
 	g_free(cookies);
 	g_hash_table_destroy(ia->cookie_table);
 	ia->cookie_table = NULL;
+	g_hash_table_destroy(ia->sent_messages_hash);
+	ia->sent_messages_hash = NULL;
 	g_hash_table_destroy(ia->user_ids);
 	ia->user_ids = NULL;
 	
