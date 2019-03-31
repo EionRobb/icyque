@@ -3,6 +3,7 @@
 
 #include <glib.h>
 #include <purple.h>
+#include <string.h>
 
 #include <http.h>
 #include "purplecompat.h"
@@ -98,10 +99,10 @@ gc_hmac_sha256(const void *key, size_t keylen, const void *in, size_t inlen, voi
 {
 #if PURPLE_VERSION_CHECK(3, 0, 0)
 	GHmac *hmac;
+	gsize digest_len = 32;
 	
 	hmac = g_hmac_new(G_CHECKSUM_SHA256, key, keylen);
 	g_hmac_update(hmac, in, inlen);
-	gsize digest_len=32;
 	g_hmac_get_digest(hmac, resbuf, &digest_len);
 	g_hmac_unref(hmac);
 	
@@ -594,12 +595,14 @@ icq_add_buddy_with_invite(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup 
 	g_string_free(postdata, TRUE);
 	g_free(uuid);
 }
-	
+
+#if !PURPLE_VERSION_CHECK(3, 0, 0)
 static void
 icq_add_buddy(PurpleConnection *pc, PurpleBuddy *buddy, PurpleGroup *group)
 {
 	icq_add_buddy_with_invite(pc, buddy, group, NULL);
 }
+#endif
 
 static void
 icq_remove_buddy_by_name(IcyQueAccount *ia, const gchar *who)
