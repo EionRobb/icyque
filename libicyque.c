@@ -101,7 +101,8 @@ gc_hmac_sha256(const void *key, size_t keylen, const void *in, size_t inlen, voi
 	
 	hmac = g_hmac_new(G_CHECKSUM_SHA256, key, keylen);
 	g_hmac_update(hmac, in, inlen);
-	g_hmac_get_digest(hmac, resbuf, 32);
+	gsize digest_len=32;
+	g_hmac_get_digest(hmac, resbuf, &digest_len);
 	g_hmac_unref(hmac);
 	
 #else
