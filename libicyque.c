@@ -316,7 +316,7 @@ icq_fetch_url_with_method(IcyQueAccount *ia, const gchar *method, const gchar *u
 	purple_http_request_set_method(request, method);
 	purple_http_request_header_set(request, "Accept", "*/*");
 	purple_http_request_header_set(request, "Cookie", cookies);
-	purple_http_request_set_timeout(request, 240);
+	purple_http_request_set_timeout(request, 59);
 
 	if (postdata) {
 		if (strstr(url, "/auth/clientLogin") && strstr(postdata, "pwd")) {
