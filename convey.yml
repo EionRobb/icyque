@@ -31,6 +31,11 @@ tasks:
     task: purple2
     environment:
       - TAG=debian-stretch-amd64
+  purple2-debian-stretch-i386:
+    type: convey/extend
+    task: purple2
+    environment:
+      - TAG=debian-stretch-i386
   purple2-fedora-28-amd64:
     type: convey/extend
     task: purple2
@@ -47,6 +52,7 @@ plans:
         tasks:
           - purple2-debian-stretch-amd64
           - purple2-fedora-28-amd64
+          - purple2-debian-stretch-i386
       - name: export
         tasks:
           - export
