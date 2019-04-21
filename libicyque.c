@@ -1028,7 +1028,7 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 					msg_flags = PURPLE_MESSAGE_SEND;
 					
 					const gchar *wid = json_object_get_string_member(message, "wid");
-					if (g_hash_table_remove(ia->sent_messages_hash, wid)) {
+					if (!wid || g_hash_table_remove(ia->sent_messages_hash, wid)) {
 						// We sent this message from Pidgin
 						continue;
 					}
