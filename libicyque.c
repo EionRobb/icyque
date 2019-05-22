@@ -188,6 +188,7 @@ icq_generate_robusto_request(IcyQueAccount *ia, const gchar* method, JsonObject*
 	GString *request_id = g_string_new(NULL);
 	g_string_append_printf(request_id, "%lu-%ld", ia->robusto_request_id++, time(NULL) - ia->server_time_offset);
 	json_object_set_string_member(robustoRequest, "reqId", request_id->str);
+	g_string_free(request_id, TRUE);
 	
 	if(ia->robusto_client_id >= 0) {
 		json_object_set_int_member(robustoRequest, "clientId", ia->robusto_client_id);
@@ -1006,10 +1007,11 @@ icq_get_chat_history(IcyQueAccount *ia, const gchar* chatId, const gchar* fromMs
 	json_object_set_int_member(getHistoryParams, "count", count);
 	
 	JsonObject *getHistoryRequest = icq_generate_robusto_request(ia, "getHistory", getHistoryParams);
-	const gchar* getHistoryRequestStr = json_object_to_string(getHistoryRequest);
+	gchar* getHistoryRequestStr = json_object_to_string(getHistoryRequest);
 	json_object_unref(getHistoryRequest);
 	
 	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, getHistoryRequestStr, callback, user_data);
+	g_free(getHistoryRequestStr);
 }
 
 static GList *valid_icyque_accounts = NULL;
@@ -1026,10 +1028,11 @@ icq_mark_message_as_read(IcyQueAccount *ia, const gchar *sn, const gchar *messag
 	json_object_set_string_member(setDlgStateParams, "sn", sn);
 	
 	JsonObject *setDlgStateRequest = icq_generate_robusto_request(ia, "setDlgState", setDlgStateParams);
-	const gchar* setDlgStateRequestStr = json_object_to_string(setDlgStateRequest);
+	gchar* setDlgStateRequestStr = json_object_to_string(setDlgStateRequest);
 	json_object_unref(setDlgStateRequest);
 	
 	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, setDlgStateRequestStr, NULL, NULL);
+	g_free(setDlgStateRequestStr);
 }
 
 static void
@@ -1037,7 +1040,7 @@ icq_unread_message_load_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_da
 {
 	JsonObject *status = json_object_get_object_member(data, "status");
 	if(status && json_object_get_int_member(status, "code") == 20000) {
-	JsonObject *results = json_object_get_object_member(data, "results");
+		JsonObject *results = json_object_get_object_member(data, "results");
 		// Acquire persons first
 		JsonArray *persons = json_object_get_array_member(results, "persons");
 		const gchar* sn = NULL; // TODO: Support group chats here
@@ -1135,6 +1138,7 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 				//TODO: "fromMsgId == -1" means last message. So the following loads all messages that are unread.
 				// Should we instead store the last message id that we saw, and sync all messages that have been sent
 				// in the meantime (with other clients e.g.) ?
+				//FIXME: Do NOT use "-1" here. This might lead to a race condition, when another client sends a new message now.
 				icq_get_chat_history(ia, sn, "-1", -unreadMsgCnt, icq_unread_message_load_cb, NULL);
 			}
 		} else {
@@ -1354,7 +1358,7 @@ static void
 icq_robusto_add_client_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 {
 	JsonObject *status = json_object_get_object_member(obj, "status");
-	if(json_object_get_int_member(status, "code") != 20000) {
+	if(!status || json_object_get_int_member(status, "code") != 20000) {
 		purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED, "Failed to register client at robusto API.");
 	} else {
 		JsonObject *results = json_object_get_object_member(obj, "results");
