@@ -3,7 +3,7 @@ ICQ WIM protocol for libpurple
 
 # Installation #
 ## Linux install ##
-Download latest builds from https://bamboo.pidgin.im/browse/ICYQUE-EIONROBB/latestSuccessful/artifact/shared/builds/ and copy into ~/.purple/plugins/ directory.
+Download latest builds from https://bamboo.pidgin.im/browse/EIONROBB-ICYQUE/latestSuccessful/artifact/shared/builds/ and copy into ~/.purple/plugins/ directory.
 
 ### Manual Compiling ###
 Requires devel headers/libs for libpurple and libjson-glib [libglib2.0-dev, libjson-glib-dev and libpurple-dev]
