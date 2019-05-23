@@ -1046,7 +1046,7 @@ icq_unread_message_load_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_da
 		// Acquire persons first
 		JsonArray *persons = json_object_get_array_member(results, "persons");
 		const gchar* sn = NULL; // TODO: Support group chats here
-		gint i, len = json_array_get_length(persons);
+		guint i, len = json_array_get_length(persons);
 		if(len == 0) return;
 		if(len > 1) {
 			purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_OTHER_ERROR, "Group-Conversations not yet supported. Please post the icyque input of the debug window in a github issue.");
@@ -1058,7 +1058,7 @@ icq_unread_message_load_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_da
 		JsonArray *messages = json_object_get_array_member(results, "messages");
 		len = json_array_get_length(messages);
 	
-		for (i = (len - 1); i >= 0; i--) {
+		for (i = 0; i < len; ++i) {
 			JsonObject *message = json_array_get_object_element(messages, i);
 			gint64 time = json_object_get_int_member(message, "time");
 			const gchar* text = json_object_get_string_member(message, "text");
@@ -1080,7 +1080,7 @@ icq_unread_message_load_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_da
 			// should it rather be done, when the conversation window is activated?
 			// .. Should it be done at all? (Responding to a message automatically marks received messages as read)
 			//TODO: Whatever the decision: This should be applied to normal messages (online messages) as well.
-			icq_mark_message_as_read(ia, sn, messageId);
+			//icq_mark_message_as_read(ia, sn, messageId);
 		}
 	} else {
 		purple_debug_warning("icyque", "Failed to retrieve unread messages.");
@@ -1137,11 +1137,19 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 			guint64 unreadMsgCnt = json_object_get_int_member(data, "unreadCnt");
 			if(unreadMsgCnt > 0) {
 				purple_debug_info("icyque", "Acquiring unread messages for conversation: %s\n", sn);
-				//TODO: "fromMsgId == -1" means last message. So the following loads all messages that are unread.
-				// Should we instead store the last message id that we saw, and sync all messages that have been sent
+				//TODO: Should we instead store the last message id that we saw, and sync all messages that have been sent
 				// in the meantime (with other clients e.g.) ?
-				//FIXME: Do NOT use "-1" here. This might lead to a race condition, when another client sends a new message now.
-				icq_get_chat_history(ia, sn, "-1", -unreadMsgCnt, icq_unread_message_load_cb, NULL);
+				
+				JsonObject *yoursMsgInfo = json_object_get_object_member(data, "yours");
+				if(yoursMsgInfo) {
+					//The heck...? This suddenly is an integer here...
+					guint64 lastMessageReadId = json_object_get_int_member(yoursMsgInfo, "lastRead");
+					if(lastMessageReadId != 0) {
+						gchar *lastMessageReadIdStr = g_strdup_printf("%lld", lastMessageReadId);
+						icq_get_chat_history(ia, sn, lastMessageReadIdStr, unreadMsgCnt, icq_unread_message_load_cb, NULL);
+						g_free(lastMessageReadIdStr);
+					}
+				}
 			}
 		} else {
 			JsonObject *tail = json_object_get_object_member(data, "tail");
