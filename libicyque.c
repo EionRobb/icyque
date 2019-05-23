@@ -97,6 +97,8 @@ typedef struct {
 	gint64 last_message_timestamp;
 	GHashTable *sent_messages_hash;
 	
+	gchar *sms_trans_id;
+	
 	// ICQ API
 	guint heartbeat_timeout;
 	PurpleHttpKeepalivePool *keepalive_pool;
@@ -1159,7 +1161,7 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 						msg_flags = PURPLE_MESSAGE_SEND;
 						
 						const gchar *wid = json_object_get_string_member(message, "wid");
-						if (!wid || g_hash_table_remove(ia->sent_messages_hash, wid)) {
+						if (wid && g_hash_table_remove(ia->sent_messages_hash, wid)) {
 							// We sent this message from Pidgin
 							continue;
 						}
@@ -1501,10 +1503,97 @@ icq_login_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 			purple_account_set_int(ia->account, "server_time_offset", ia->server_time_offset);
 			
 			icq_session_start(ia);
+			
+			return;
 		}
 	}
+	
+	purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED, _("Bad username/password"));
 }
+
+static void
+icq_mfa_text_entry_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	JsonObject *response = json_object_get_object_member(obj, "response");
+	
+	if (json_object_get_int_member(response, "statusCode") == 200) {
+		JsonObject *data = json_object_get_object_member(response, "data");
+		JsonObject *token = json_object_get_object_member(data, "token");
+		const gchar *a = json_object_get_string_member(token, "a");
+		const gchar *loginId = json_object_get_string_member(data, "loginId");
+		const gchar *sessionKey = json_object_get_string_member(data, "sessionKey");
 		
+		if (a != NULL) {
+			ia->token = g_strdup(purple_url_decode(a));
+			ia->session_key = g_strdup(sessionKey);
+			purple_connection_set_display_name(ia->pc, loginId);
+			
+			purple_account_set_string(ia->account, "token", ia->token);
+			purple_account_set_string(ia->account, "session_key", ia->session_key);
+			
+			icq_session_start(ia);
+			
+			return;
+		}
+	}
+	
+	purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED, _("Bad username/password"));
+}
+
+static void
+icq_mfa_text_entry(gpointer user_data, const gchar *code)
+{
+	IcyQueAccount *ia = user_data;
+	const gchar *username = purple_account_get_username(ia->account);
+	GString *postdata = g_string_new(NULL);
+	
+	g_string_append_printf(postdata, "msisdn=%s&", purple_url_encode(&username[1]));
+	g_string_append_printf(postdata, "trans_id=%s&", purple_url_encode(ia->sms_trans_id));
+	g_string_append_printf(postdata, "sms_code=%s&", purple_url_encode(code));
+	g_string_append(postdata, "locale=en&");
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append(postdata, "platform=web&");
+	g_string_append(postdata, "create_account=1&");
+	g_string_append(postdata, "client=icq&");
+	g_string_append_printf(postdata, "r=%d&", g_random_int());
+	
+	icq_fetch_url_with_method(ia, "POST", "https://u.icq.net/smsreg/loginWithPhoneNumber.php", postdata->str, icq_mfa_text_entry_cb, NULL);
+
+	g_string_free(postdata, TRUE);
+	
+	g_free(ia->sms_trans_id);
+	ia->sms_trans_id = NULL;
+}
+
+static void
+icq_mfa_cancel(gpointer user_data)
+{
+	IcyQueAccount *ia = user_data;
+
+	purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED, _("Cancelled 2FA auth"));
+}
+
+static void
+icq_sms_login_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	JsonObject *response = json_object_get_object_member(obj, "response");
+	
+	if (json_object_get_int_member(response, "statusCode") == 200) {
+		JsonObject *data = json_object_get_object_member(response, "data");
+		const gchar *trans_id = json_object_get_string_member(data, "trans_id");
+		ia->sms_trans_id = g_strdup(trans_id);
+		
+		purple_request_input(ia->pc, _("Two-factor authentication"),
+							 _("Enter SMS code"),
+							 _("You will be sent an SMS message containing your auth code."),
+							 NULL, FALSE, FALSE, "",
+							 _("_Login"), G_CALLBACK(icq_mfa_text_entry),
+							 _("_Cancel"), G_CALLBACK(icq_mfa_cancel),
+							 purple_request_cpar_from_connection(ia->pc),
+							 ia);
+	}
+}
+
 static void
 icq_login(PurpleAccount *account)
 {
@@ -1541,18 +1630,36 @@ icq_login(PurpleAccount *account)
 	
 	
 	if (ia->token == NULL) {
+		const gchar *username = purple_account_get_username(account);
 		GString *postdata = g_string_new(NULL);
 		
-		//TODO do we pretend to be an official device?
-		g_string_append_printf(postdata, "clientName=%s&", purple_url_encode("ICQ"));
-		g_string_append_printf(postdata, "clientVersion=%s&", purple_url_encode("7.4"));
-		g_string_append_printf(postdata, "devId=%s&", purple_url_encode(ICQ_DEVID));
-		g_string_append(postdata, "f=json&");
-		g_string_append(postdata, "idType=ICQ&");
-		g_string_append_printf(postdata, "pwd=%s&", purple_url_encode(purple_connection_get_password(pc)));
-		g_string_append_printf(postdata, "s=%s&", purple_url_encode(purple_account_get_username(account)));
-		
-		icq_fetch_url_with_method(ia, "POST", "https://api.login.icq.net/auth/clientLogin", postdata->str, icq_login_cb, NULL);
+		if (username[0] != '+') {		
+			//TODO do we pretend to be an official device?
+			g_string_append_printf(postdata, "clientName=%s&", purple_url_encode("ICQ"));
+			g_string_append_printf(postdata, "clientVersion=%s&", purple_url_encode("7.4"));
+			g_string_append_printf(postdata, "devId=%s&", purple_url_encode(ICQ_DEVID));
+			g_string_append(postdata, "f=json&");
+			g_string_append(postdata, "idType=ICQ&");
+			g_string_append_printf(postdata, "pwd=%s&", purple_url_encode(purple_connection_get_password(pc)));
+			g_string_append_printf(postdata, "s=%s&", purple_url_encode(username));
+			
+			icq_fetch_url_with_method(ia, "POST", "https://api.login.icq.net/auth/clientLogin", postdata->str, icq_login_cb, NULL);
+			
+		} else {
+			// Phone/SMS auth
+			g_string_append_printf(postdata, "msisdn=%s&", purple_url_encode(&username[1]));
+			g_string_append(postdata, "locale=en&");
+			g_string_append(postdata, "countryCode=ru&");
+			g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+			g_string_append(postdata, "version=1&");
+			g_string_append(postdata, "platform=web&");
+			g_string_append(postdata, "client=icq&");
+			g_string_append(postdata, "checks=sms&");
+			g_string_append_printf(postdata, "r=%d&", g_random_int());
+			
+			icq_fetch_url_with_method(ia, "POST", "https://u.icq.net/smsreg/requestPhoneValidation.php", postdata->str, icq_sms_login_cb, NULL);
+			
+		}
 		
 		g_string_free(postdata, TRUE);
 	} else {
@@ -1599,6 +1706,7 @@ icq_close(PurpleConnection *pc)
 	g_free(ia->session_key);
 	g_free(ia->aimsid);
 	g_free(ia->robusto_token);
+	g_free(ia->sms_trans_id);
 	
 	g_free(ia);
 }
@@ -1706,7 +1814,7 @@ plugin_init(PurplePlugin *plugin)
 	prpl_info->add_buddy_with_invite = icq_add_buddy_with_invite;
 #endif
 
-	prpl_info->options = OPT_PROTO_CHAT_TOPIC | OPT_PROTO_INVITE_MESSAGE;
+	prpl_info->options = OPT_PROTO_CHAT_TOPIC | OPT_PROTO_INVITE_MESSAGE | OPT_PROTO_PASSWORD_OPTIONAL;
 	// prpl_info->protocol_options = icyque_add_account_options(prpl_info->protocol_options);
 	prpl_info->icon_spec.format = "png,gif,jpeg";
 	prpl_info->icon_spec.min_width = 0;
