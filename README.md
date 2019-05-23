@@ -22,3 +22,7 @@ If you haven't used one of my other plugins before, you'll need [libjson-glib-1.
 If you're switching to IcyQue from the built-in ICQ plugin, you'll need to restart Pidgin and then edit your existing account (or create a new account) with the "ICQ (WIM)" protocol:
 
 ![image](https://user-images.githubusercontent.com/1063865/55356131-95b07b00-5526-11e9-9fb8-27e0fc18ce74.png)
+
+If you only have a phone number, then enter that with a + at the beginning and leave the password field blank
+
+![image](https://user-images.githubusercontent.com/1063865/58231424-15baca80-7d8b-11e9-9f85-e6d502ee3dfd.png)
