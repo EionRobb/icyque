@@ -32,6 +32,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define ICQ_PRESENCE_FIELDS    "quiet,ssl,abFriendly,role,capabilities,role,abPhones,aimId,autoAddition,friendly,largeIconId,lastseen,mute,pending,state,eventType,seqNum,displayId,friendlyName,userType,statusMsg,statusTime,buddyIcon,abContactName,abPhones,official"
 #define ICQ_ASSERT_CAPS "094613564C7F11D18222444553540000,0946135A4C7F11D18222444553540000,0946135B4C7F11D18222444553540000,0946135D4C7F11D18222444553540000,0946135C4C7F11D18222444553540000,094613574C7F11D18222444553540000,094613504C7F11D18222444553540000,094613514C7F11D18222444553540000,094613534C7F11D18222444553540000,0946135E4C7F11D18222444553540000,094613544C7F11D18222444553540000,0946135F4C7F11D18222444553540000"
 #define ICQ_API_SERVER        "https://api.icq.net"
+#define ICQ_RAPI_SERVER       "https://rapi.icq.net"
 #define ICQ_DEVID             "ao1mAegmj4_7xQOy"
 
 #ifndef _
@@ -60,7 +61,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define json_array_get_length(JSON_ARRAY) \
 	(JSON_ARRAY ? json_array_get_length(JSON_ARRAY) : 0)
 
-/*static gchar *
+static gchar *
 json_object_to_string(JsonObject *obj)
 {
 	JsonNode *node;
@@ -78,7 +79,7 @@ json_object_to_string(JsonObject *obj)
 	json_node_free(node);
 
 	return str;
-}*/
+}
 
 
 typedef struct {
@@ -96,9 +97,16 @@ typedef struct {
 	gint64 last_message_timestamp;
 	GHashTable *sent_messages_hash;
 	
+	// ICQ API
 	guint heartbeat_timeout;
 	PurpleHttpKeepalivePool *keepalive_pool;
 	gchar *last_fetchBaseURL;
+	
+	// RAPI (Robusto API)
+	gint64 server_time_offset;
+	gchar *robusto_token;
+	gint64 robusto_client_id;
+	guint64 robusto_request_id;
 } IcyQueAccount;
 
 
@@ -142,6 +150,7 @@ gc_hmac_sha256(const void *key, size_t keylen, const void *in, size_t inlen, voi
 gchar *
 icq_generate_signature(const gchar *data, const gchar *session)
 {
+	purple_debug_info("icyque", "Signature: {%s}, Session: {%s}\n", data, session);
 	static guchar sig[33];
 
 	gc_hmac_sha256(session, strlen(session), data, strlen(data), sig);
@@ -166,6 +175,27 @@ icq_get_url_sign(IcyQueAccount *ia, gboolean is_post, const gchar *url, const gc
 	g_string_free(hash_data, TRUE);
 	
     return ret;
+}
+
+static JsonObject*
+icq_generate_robusto_request(IcyQueAccount *ia, const gchar* method, JsonObject* params)
+{
+	JsonObject *robustoRequest = json_object_new();
+	
+	json_object_set_string_member(robustoRequest, "authToken", ia->robusto_token);
+	json_object_set_string_member(robustoRequest, "method", method);
+	
+	GString *request_id = g_string_new(NULL);
+	g_string_append_printf(request_id, "%lu-%ld", ia->robusto_request_id++, time(NULL) - ia->server_time_offset);
+	json_object_set_string_member(robustoRequest, "reqId", request_id->str);
+	g_string_free(request_id, TRUE);
+	
+	if(ia->robusto_client_id >= 0) {
+		json_object_set_int_member(robustoRequest, "clientId", ia->robusto_client_id);
+	}
+	
+	json_object_set_object_member(robustoRequest, "params", params);
+	return robustoRequest;
 }
 
 /*static gint64
@@ -437,7 +467,7 @@ icq_set_status(PurpleAccount *account, PurpleStatus *status)
 	g_string_append_printf(postdata, "aimsid=%s&", purple_url_encode(ia->aimsid));
 	g_string_append(postdata, "f=json&");
 	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
-	g_string_append_printf(postdata, "ts=%d&", (int) time(NULL));
+	g_string_append_printf(postdata, "ts=%d&", (int)(time(NULL) - ia->server_time_offset));
 	g_string_append_printf(postdata, "view=%s", purple_url_encode(status_id));
 	
 	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
@@ -460,7 +490,7 @@ icq_set_status(PurpleAccount *account, PurpleStatus *status)
 	g_string_append(postdata, "f=json&");
 	g_string_append_printf(postdata, "nonce=%s&", purple_url_encode(uuid));
 	g_string_append_printf(postdata, "statusMsg=%s&", purple_url_encode(message ? message : ""));
-	g_string_append_printf(postdata, "ts=%d", (int) time(NULL));
+	g_string_append_printf(postdata, "ts=%d", (int)(time(NULL) - ia->server_time_offset));
 
 	sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
 	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
@@ -963,8 +993,97 @@ icq_got_buddy_icon(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 	g_dataset_destroy(buddy);
 }
 
+static void
+icq_get_chat_history(IcyQueAccount *ia, const gchar* chatId, const gchar* fromMsg, gint64 count, IcyQueProxyCallbackFunc callback, gpointer user_data)
+{
+	JsonObject* getHistoryParams = json_object_new();
+	json_object_set_string_member(getHistoryParams, "aimsid", ia->aimsid);
+	json_object_set_string_member(getHistoryParams, "lang", "en-US");
+	//FIXME: I have absolutely no idea where this comes from or what this is.
+	//TODO: the initial histDlgState event contains a patchVersion. Store this per conversation and use that..?
+	json_object_set_string_member(getHistoryParams, "patchVersion", "1");
+	json_object_set_string_member(getHistoryParams, "sn", chatId);
+	json_object_set_string_member(getHistoryParams, "fromMsgId", fromMsg);
+	json_object_set_int_member(getHistoryParams, "count", count);
+	
+	JsonObject *getHistoryRequest = icq_generate_robusto_request(ia, "getHistory", getHistoryParams);
+	gchar* getHistoryRequestStr = json_object_to_string(getHistoryRequest);
+	json_object_unref(getHistoryRequest);
+	
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, getHistoryRequestStr, callback, user_data);
+	g_free(getHistoryRequestStr);
+}
+
 static GList *valid_icyque_accounts = NULL;
 #define ICYQUE_ACCOUNT_IS_VALID(ia) (g_list_find(valid_icyque_accounts, (ia)) != NULL)
+
+static void
+icq_mark_message_as_read(IcyQueAccount *ia, const gchar *sn, const gchar *messageId)
+{
+	JsonObject *setDlgStateParams = json_object_new();
+	JsonArray *exclude = json_array_new();
+	json_object_set_string_member(setDlgStateParams, "aimSid", ia->aimsid);
+	json_object_set_array_member(setDlgStateParams, "exclude", exclude);
+	json_object_set_string_member(setDlgStateParams, "lastRead", messageId);
+	json_object_set_string_member(setDlgStateParams, "sn", sn);
+	
+	JsonObject *setDlgStateRequest = icq_generate_robusto_request(ia, "setDlgState", setDlgStateParams);
+	gchar* setDlgStateRequestStr = json_object_to_string(setDlgStateRequest);
+	json_object_unref(setDlgStateRequest);
+	
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, setDlgStateRequestStr, NULL, NULL);
+	g_free(setDlgStateRequestStr);
+}
+
+static void
+icq_unread_message_load_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data)
+{
+	JsonObject *status = json_object_get_object_member(data, "status");
+	if(status && json_object_get_int_member(status, "code") == 20000) {
+		JsonObject *results = json_object_get_object_member(data, "results");
+		// Acquire persons first
+		JsonArray *persons = json_object_get_array_member(results, "persons");
+		const gchar* sn = NULL; // TODO: Support group chats here
+		gint i, len = json_array_get_length(persons);
+		if(len == 0) return;
+		if(len > 1) {
+			purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_OTHER_ERROR, "Group-Conversations not yet supported. Please post the icyque input of the debug window in a github issue.");
+			return;
+		}
+		JsonObject* firstPerson = json_array_get_object_element(persons, 0);
+		sn = json_object_get_string_member(firstPerson, "sn");
+	
+		JsonArray *messages = json_object_get_array_member(results, "messages");
+		len = json_array_get_length(messages);
+	
+		for (i = (len - 1); i >= 0; i--) {
+			JsonObject *message = json_array_get_object_element(messages, i);
+			gint64 time = json_object_get_int_member(message, "time");
+			const gchar* text = json_object_get_string_member(message, "text");
+			gchar *escaped_text = purple_markup_escape_text(text, -1);
+			purple_serv_got_im(ia->pc, sn, escaped_text, PURPLE_MESSAGE_RECV, (time_t) time);
+			g_free(escaped_text);
+		}
+		
+		// Take the last received message's id, and mark it as read.
+		if(len > 0) {
+			JsonObject* lastMessage = json_array_get_object_element(messages, 0);
+			const gchar* messageId = json_object_get_string_member(lastMessage, "msgId");
+			gint64 time = json_object_get_int_member(lastMessage, "time");
+			
+			ia->last_message_timestamp = MAX(ia->last_message_timestamp, time);
+			purple_account_set_int(ia->account, "last_message_timestamp_high", ia->last_message_timestamp >> 32);
+			purple_account_set_int(ia->account, "last_message_timestamp_low", ia->last_message_timestamp & 0xFFFFFFFF);
+			//TODO: Should this be done directly after retrieiving them here?
+			// should it rather be done, when the conversation window is activated?
+			// .. Should it be done at all? (Responding to a message automatically marks received messages as read)
+			//TODO: Whatever the decision: This should be applied to normal messages (online messages) as well.
+			icq_mark_message_as_read(ia, sn, messageId);
+		}
+	} else {
+		purple_debug_warning("icyque", "Failed to retrieve unread messages.");
+	}
+}
 
 static void
 icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
@@ -1010,133 +1129,143 @@ icq_process_event(IcyQueAccount *ia, const gchar *event_type, JsonObject *data)
 		purple_serv_got_typing(ia->pc, aimId, 10, typing_state);
 		
 	} else if (purple_strequal(event_type, "histDlgState")) {
-		JsonObject *tail = json_object_get_object_member(data, "tail");
-		JsonArray *messages = json_object_get_array_member((tail != NULL ? tail : data), "messages");
 		const gchar *sn = json_object_get_string_member(data, "sn");
-		guint i, len = json_array_get_length(messages);
-		
-		for (i = 0; i < len; i++) {
-			JsonObject *message = json_array_get_object_element(messages, i);
-			gint64 time = json_object_get_int_member(message, "time");
-			
-			if (ia->last_message_timestamp && time > ia->last_message_timestamp) {
-				const gchar *mediaType = json_object_get_string_member(message, "mediaType");
-				const gchar *text = json_object_get_string_member(message, "text");
-				PurpleMessageFlags msg_flags = PURPLE_MESSAGE_RECV;
-				
-				if (json_object_get_boolean_member(message, "outgoing")) {
-					msg_flags = PURPLE_MESSAGE_SEND;
-					
-					const gchar *wid = json_object_get_string_member(message, "wid");
-					if (!wid || g_hash_table_remove(ia->sent_messages_hash, wid)) {
-						// We sent this message from Pidgin
-						continue;
-					}
-				}
-				
-				gchar *escaped_text = purple_markup_escape_text(text, -1);
-				
-				if (g_str_has_suffix(sn, "@chat.agent")) {
-					// Group chat
-					JsonObject *chat = json_object_get_object_member(message, "chat");
-					const gchar *sender = json_object_get_string_member(chat, "sender");
-					const gchar *chatName = json_object_get_string_member(chat, "name");
-					JsonObject *memberEvent = json_object_get_object_member(chat, "memberEvent");
-					
-					if (memberEvent != NULL) {
-						PurpleChatConversation *chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
-						const gchar *memberEventType = json_object_get_string_member(memberEvent, "type");
-						if (purple_strequal(memberEventType, "invite") || purple_strequal(memberEventType, "addMembers")) {
-							JsonArray *members = json_object_get_array_member(memberEvent, "members");
-							//add members to the group chat
-							const gchar *role = json_object_get_string_member(memberEvent, "role");
-							PurpleChatUserFlags cbflags = PURPLE_CHAT_USER_NONE;
-							if (purple_strequal(role, "admin")) {
-								cbflags = PURPLE_CHAT_USER_OP;
-							} else if (purple_strequal(role, "moder")) {
-								cbflags = PURPLE_CHAT_USER_HALFOP;
-							}
-							
-							GList *users = NULL, *flags = NULL;
-							int j;
-							for (j = json_array_get_length(members) - 1; j >= 0; j--) {
-								const gchar *member = json_array_get_string_element(members, j);
-								
-								users = g_list_prepend(users, g_strdup(member));
-								flags = g_list_prepend(flags, GINT_TO_POINTER(cbflags));
-							}
-							
-							purple_chat_conversation_add_users(chatconv, users, NULL, flags, TRUE);
-							while (users != NULL) {
-								g_free(users->data);
-								users = g_list_delete_link(users, users);
-							}
-							g_list_free(flags);
-							
-						} else if (purple_strequal(memberEventType, "delMembers")) {
-							JsonArray *members = json_object_get_array_member(memberEvent, "members");
-							//remove members from the group chat
-							GList *users = NULL;
-							int j;
-							for (j = json_array_get_length(members) - 1; j >= 0; j--) {
-								const gchar *member = json_array_get_string_element(members, j);
-								
-								users = g_list_prepend(users, g_strdup(member));
-							}
-							
-							purple_chat_conversation_remove_users(chatconv, users, NULL);
-							while (users != NULL) {
-								g_free(users->data);
-								users = g_list_delete_link(users, users);
-							}
-						}
-						
-						
-					} else if (purple_strequal(mediaType, "text")) {
-						PurpleChatConversation *chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
-						if (chatconv == NULL) {
-							chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(sn), sn);
-							purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(sn));
-							purple_chat_conversation_set_topic(chatconv, NULL, chatName);
-						}
-						
-						purple_serv_got_chat_in(ia->pc, g_str_hash(sn), sender, msg_flags, escaped_text, time);
-						
-					} else {
-						purple_debug_warning("icyque", "Unknown chat message mediaType '%s'\n", mediaType);
-					}
-					
-				} else {
-					// One-to-one IM
-					if (purple_strequal(mediaType, "text")) {
-							
-							
-							if (msg_flags & PURPLE_MESSAGE_SEND) {
-								PurpleIMConversation *imconv = purple_conversations_find_im_with_account(sn, ia->account);
-								PurpleMessage *msgObj = purple_message_new_outgoing(sn, escaped_text, msg_flags);
-								if (imconv == NULL)
-								{
-									imconv = purple_im_conversation_new(ia->account, sn);
-								}
-								purple_message_set_time(msgObj, time);
-								purple_conversation_write_message(PURPLE_CONVERSATION(imconv), msgObj);
-								
-							} else {
-								purple_serv_got_im(ia->pc, sn, escaped_text, msg_flags, (time_t) time);
-							}
-					} else {
-						purple_debug_warning("icyque", "Unknown IM message mediaType '%s'\n", mediaType);
-					}
-				}
-				
-				g_free(escaped_text);
+		// Use initial fetch-event (starting == true) to load all unread messages.
+		if(json_object_get_boolean_member(data, "starting")) {
+			guint64 unreadMsgCnt = json_object_get_int_member(data, "unreadCnt");
+			if(unreadMsgCnt > 0) {
+				purple_debug_info("icyque", "Acquiring unread messages for conversation: %s\n", sn);
+				//TODO: "fromMsgId == -1" means last message. So the following loads all messages that are unread.
+				// Should we instead store the last message id that we saw, and sync all messages that have been sent
+				// in the meantime (with other clients e.g.) ?
+				//FIXME: Do NOT use "-1" here. This might lead to a race condition, when another client sends a new message now.
+				icq_get_chat_history(ia, sn, "-1", -unreadMsgCnt, icq_unread_message_load_cb, NULL);
 			}
+		} else {
+			JsonObject *tail = json_object_get_object_member(data, "tail");
+			JsonArray *messages = json_object_get_array_member((tail != NULL ? tail : data), "messages");
+			guint i, len = json_array_get_length(messages);
 			
-			ia->last_message_timestamp = MAX(ia->last_message_timestamp, time);
-			purple_account_set_int(ia->account, "last_message_timestamp_high", ia->last_message_timestamp >> 32);
-			purple_account_set_int(ia->account, "last_message_timestamp_low", ia->last_message_timestamp & 0xFFFFFFFF);
+			for (i = 0; i < len; i++) {
+				JsonObject *message = json_array_get_object_element(messages, i);
+				gint64 time = json_object_get_int_member(message, "time");
+				
+				if (ia->last_message_timestamp && time > ia->last_message_timestamp) {
+					const gchar *mediaType = json_object_get_string_member(message, "mediaType");
+					const gchar *text = json_object_get_string_member(message, "text");
+					PurpleMessageFlags msg_flags = PURPLE_MESSAGE_RECV;
+					
+					if (json_object_get_boolean_member(message, "outgoing")) {
+						msg_flags = PURPLE_MESSAGE_SEND;
+						
+						const gchar *wid = json_object_get_string_member(message, "wid");
+						if (!wid || g_hash_table_remove(ia->sent_messages_hash, wid)) {
+							// We sent this message from Pidgin
+							continue;
+						}
+					}
+					
+					gchar *escaped_text = purple_markup_escape_text(text, -1);
+					
+					if (g_str_has_suffix(sn, "@chat.agent")) {
+						// Group chat
+						JsonObject *chat = json_object_get_object_member(message, "chat");
+						const gchar *sender = json_object_get_string_member(chat, "sender");
+						const gchar *chatName = json_object_get_string_member(chat, "name");
+						JsonObject *memberEvent = json_object_get_object_member(chat, "memberEvent");
+						
+						if (memberEvent != NULL) {
+							PurpleChatConversation *chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
+							const gchar *memberEventType = json_object_get_string_member(memberEvent, "type");
+							if (purple_strequal(memberEventType, "invite") || purple_strequal(memberEventType, "addMembers")) {
+								JsonArray *members = json_object_get_array_member(memberEvent, "members");
+								//add members to the group chat
+								const gchar *role = json_object_get_string_member(memberEvent, "role");
+								PurpleChatUserFlags cbflags = PURPLE_CHAT_USER_NONE;
+								if (purple_strequal(role, "admin")) {
+									cbflags = PURPLE_CHAT_USER_OP;
+								} else if (purple_strequal(role, "moder")) {
+									cbflags = PURPLE_CHAT_USER_HALFOP;
+								}
+								
+								GList *users = NULL, *flags = NULL;
+								int j;
+								for (j = json_array_get_length(members) - 1; j >= 0; j--) {
+									const gchar *member = json_array_get_string_element(members, j);
+									
+									users = g_list_prepend(users, g_strdup(member));
+									flags = g_list_prepend(flags, GINT_TO_POINTER(cbflags));
+								}
+								
+								purple_chat_conversation_add_users(chatconv, users, NULL, flags, TRUE);
+								while (users != NULL) {
+									g_free(users->data);
+									users = g_list_delete_link(users, users);
+								}
+								g_list_free(flags);
+								
+							} else if (purple_strequal(memberEventType, "delMembers")) {
+								JsonArray *members = json_object_get_array_member(memberEvent, "members");
+								//remove members from the group chat
+								GList *users = NULL;
+								int j;
+								for (j = json_array_get_length(members) - 1; j >= 0; j--) {
+									const gchar *member = json_array_get_string_element(members, j);
+									
+									users = g_list_prepend(users, g_strdup(member));
+								}
+								
+								purple_chat_conversation_remove_users(chatconv, users, NULL);
+								while (users != NULL) {
+									g_free(users->data);
+									users = g_list_delete_link(users, users);
+								}
+							}
+							
+							
+						} else if (purple_strequal(mediaType, "text")) {
+							PurpleChatConversation *chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
+							if (chatconv == NULL) {
+								chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(sn), sn);
+								purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(sn));
+								purple_chat_conversation_set_topic(chatconv, NULL, chatName);
+							}
+							
+							purple_serv_got_chat_in(ia->pc, g_str_hash(sn), sender, msg_flags, escaped_text, time);
+							
+						} else {
+							purple_debug_warning("icyque", "Unknown chat message mediaType '%s'\n", mediaType);
+						}
+						
+					} else {
+						// One-to-one IM
+						if (purple_strequal(mediaType, "text")) {
+								if (msg_flags & PURPLE_MESSAGE_SEND) {
+									PurpleIMConversation *imconv = purple_conversations_find_im_with_account(sn, ia->account);
+									PurpleMessage *msgObj = purple_message_new_outgoing(sn, escaped_text, msg_flags);
+									if (imconv == NULL)
+									{
+										imconv = purple_im_conversation_new(ia->account, sn);
+									}
+									purple_message_set_time(msgObj, time);
+									purple_conversation_write_message(PURPLE_CONVERSATION(imconv), msgObj);
+									
+								} else {
+									purple_serv_got_im(ia->pc, sn, escaped_text, msg_flags, (time_t) time);
+								}
+						} else {
+							purple_debug_warning("icyque", "Unknown IM message mediaType '%s'\n", mediaType);
+						}
+					}
+					
+					g_free(escaped_text);
+				}
+				
+				ia->last_message_timestamp = MAX(ia->last_message_timestamp, time);
+				purple_account_set_int(ia->account, "last_message_timestamp_high", ia->last_message_timestamp >> 32);
+				purple_account_set_int(ia->account, "last_message_timestamp_low", ia->last_message_timestamp & 0xFFFFFFFF);
+			}
 		}
-		
 	} else if (purple_strequal(event_type, "userAddedToBuddyList")) {
 		/*{
 					"requester": "123456789",
@@ -1226,6 +1355,75 @@ icq_fetch_events_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 }
 
 static void
+icq_robusto_add_client_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	JsonObject *status = json_object_get_object_member(obj, "status");
+	if(!status || json_object_get_int_member(status, "code") != 20000) {
+		purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED, "Failed to register client at robusto API.");
+	} else {
+		JsonObject *results = json_object_get_object_member(obj, "results");
+		guint64 clientId = json_object_get_int_member(results, "clientId");
+		ia->robusto_client_id = clientId;
+		
+		purple_connection_set_state(ia->pc, PURPLE_CONNECTION_CONNECTED);
+		purple_debug_info("icyque", "Authentication succeeded. Starting fetch-loop.\n");
+		icq_fetch_url_with_method(ia, "GET", ia->last_fetchBaseURL, NULL, icq_fetch_events_cb, NULL);
+	}
+}
+
+static void icq_robusto_add_client(IcyQueAccount *ia)
+{
+	JsonObject *addClientParams = json_object_new();
+	JsonObject *addClientParamsUserAgent = json_object_new();
+	json_object_set_object_member(addClientParams, "ua", addClientParamsUserAgent);
+	json_object_set_string_member(addClientParamsUserAgent, "app", "icq"); //TODO pretend to be official client or Pidgin?
+	json_object_set_string_member(addClientParamsUserAgent, "build", "1");
+	json_object_set_string_member(addClientParamsUserAgent, "label", "webicq");
+	json_object_set_string_member(addClientParamsUserAgent, "os", "win");
+	json_object_set_string_member(addClientParamsUserAgent, "version", "0.1");
+	
+	JsonObject *addClientRequest = icq_generate_robusto_request(ia, "addClient", addClientParams);
+
+	const gchar* addClientRequestStr = json_object_to_string(addClientRequest);
+	json_object_unref(addClientRequest);
+	
+	purple_debug_info("icyque", "Registering client at ICQ RAPI.\n");
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, addClientRequestStr, icq_robusto_add_client_cb, NULL);
+}
+
+static void
+icq_robusto_gen_token_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
+{
+	JsonObject *results = json_object_get_object_member(obj, "results");
+	const gchar *authToken = json_object_get_string_member(results, "authToken");
+	
+	if(authToken == NULL) {
+		purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_AUTHENTICATION_FAILED, "Failed to acquire authentication token (robusto).");
+	} else {
+		ia->robusto_token = g_strdup(authToken);
+		icq_robusto_add_client(ia);
+	}
+}
+
+static void icq_robusto_gen_token(IcyQueAccount *ia)
+{
+	const gchar *url = ICQ_RAPI_SERVER "/genToken";
+	GString *postdata = g_string_new(NULL);
+	
+	// Make sure these are added alphabetically for the signature to work
+	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append_printf(postdata, "ts=%d", (int)(time(NULL) - ia->server_time_offset));
+	
+	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
+	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
+	g_free(sig_sha256);
+	
+	icq_fetch_url_with_method(ia, "POST", url, postdata->str, icq_robusto_gen_token_cb, NULL);
+	g_string_free(postdata, TRUE);
+}
+
+static void
 icq_session_start_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 {
 	if (!ICYQUE_ACCOUNT_IS_VALID(ia)) return;
@@ -1239,9 +1437,7 @@ icq_session_start_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 	ia->aimsid = g_strdup(aimsid);
 	ia->last_fetchBaseURL = g_strdup(fetchBaseURL);
 	
-	purple_connection_set_state(ia->pc, PURPLE_CONNECTION_CONNECTED);
-	
-	icq_fetch_url_with_method(ia, "GET", fetchBaseURL, NULL, icq_fetch_events_cb, NULL);
+	icq_robusto_gen_token(ia);
 }
 
 static void
@@ -1269,7 +1465,7 @@ icq_session_start(IcyQueAccount *ia)
 	g_string_append(postdata, "rawMsg=0&");
 	g_string_append(postdata, "sessionTimeout=31536000&");
 	//g_string_append(postdata, "sig_sha256_force=1&");
-	g_string_append_printf(postdata, "ts=%d&", (int) time(NULL));
+	g_string_append_printf(postdata, "ts=%d&", (int)(time(NULL) - ia->server_time_offset));
 	g_string_append(postdata, "view=online"); //todo mobile?
 	
 	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
@@ -1292,14 +1488,17 @@ icq_login_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 		const gchar *a = json_object_get_string_member(token, "a");
 		const gchar *loginId = json_object_get_string_member(data, "loginId");
 		const gchar *sessionSecret = json_object_get_string_member(data, "sessionSecret");
+		const gint64 hostTime = json_object_get_int_member(data, "hostTime");
 		
 		if (a != NULL) {
 			ia->token = g_strdup(purple_url_decode(a));
 			ia->session_key = icq_generate_signature(sessionSecret, purple_connection_get_password(ia->pc));
+			ia->server_time_offset = (gint64)time(NULL) - hostTime;
 			purple_connection_set_display_name(ia->pc, loginId);
 			
 			purple_account_set_string(ia->account, "token", ia->token);
 			purple_account_set_string(ia->account, "session_key", ia->session_key);
+			purple_account_set_int(ia->account, "server_time_offset", ia->server_time_offset);
 			
 			icq_session_start(ia);
 		}
@@ -1323,6 +1522,8 @@ icq_login(PurpleAccount *account)
 	ia->keepalive_pool = purple_http_keepalive_pool_new();
 	ia->token = g_strdup(purple_account_get_string(ia->account, "token", NULL));
 	ia->session_key = g_strdup(purple_account_get_string(ia->account, "session_key", NULL));
+	ia->server_time_offset = purple_account_get_int(ia->account, "server_time_offset", 0);
+	ia->robusto_client_id = -1;
 	
 	if (ia->device_id == NULL) {
 		//TODO pretend to be official client or Pidgin?
@@ -1397,6 +1598,7 @@ icq_close(PurpleConnection *pc)
 	g_free(ia->token);
 	g_free(ia->session_key);
 	g_free(ia->aimsid);
+	g_free(ia->robusto_token);
 	
 	g_free(ia);
 }
