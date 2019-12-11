@@ -822,6 +822,38 @@ icq_chat_invite(PurpleConnection *pc, int id, const char *message, const char *w
 }
 
 static void
+icq_joined_chat_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data){
+	gchar *chatId = user_data;
+
+	PurpleChatConversation *chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(chatId), chatId);
+	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(chatId));
+	
+	purple_conversation_present(PURPLE_CONVERSATION(chatconv));
+
+	g_free(chatId);
+	
+	//TODO download history and room list members
+}
+
+static int
+do_icq_join_chat(IcyQueAccount *ia, const gchar *chatId)
+{
+
+	// {"method":"joinChat","reqId":"censored","aimsid":"censored","params":{"stamp":"AoLFq-UEyLqpbUxAA0c"}}
+	JsonObject* joinChatParams = json_object_new();
+	json_object_set_string_member(joinChatParams, "aimsid", ia->aimsid);
+	json_object_set_string_member(joinChatParams, "stamp", chatId);
+
+	JsonObject *joinChatRequest = icq_generate_robusto_request(ia, "joinChat", joinChatParams);
+
+	gchar* joinChatRequestStr = json_object_to_string(joinChatRequest);
+	json_object_unref(joinChatRequest);
+	
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, joinChatRequestStr, icq_joined_chat_cb, g_strdup(chatId));
+	g_free(joinChatRequestStr);
+}	
+
+static void
 icq_join_chat(PurpleConnection *pc, GHashTable *data)
 {
 	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
@@ -839,13 +871,9 @@ icq_join_chat(PurpleConnection *pc, GHashTable *data)
 		purple_conversation_present(PURPLE_CONVERSATION(chatconv));
 		return;
 	}
-	
-	chatconv = purple_serv_got_joined_chat(pc, g_str_hash(sn), sn);
-	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(sn));
-	
-	purple_conversation_present(PURPLE_CONVERSATION(chatconv));
-	
-	//TODO download history and room list members
+
+	do_icq_join_chat(ia, sn);
+
 }
 
 static void
