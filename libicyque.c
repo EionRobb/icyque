@@ -750,7 +750,7 @@ icq_chat_info(PurpleConnection *pc)
 
 	pce = g_new0(PurpleProtocolChatEntry, 1);
 	pce->label = _("Group ID");
-	pce->identifier = "sn";
+	pce->identifier = "stamp";
 	pce->required = TRUE;
 	m = g_list_append(m, pce);
 	
@@ -824,6 +824,8 @@ icq_chat_invite(PurpleConnection *pc, int id, const char *message, const char *w
 
 static void
 icq_join_chat_got_chat_info_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data){
+	// Create a chat conversation from a getIdInfo response.
+
 	// Example response:
 	/*
 		{
@@ -854,7 +856,7 @@ icq_join_chat_got_chat_info_cb(IcyQueAccount *ia, JsonObject *data, gpointer use
 	const gchar *chat_stamp = json_object_get_string_member(json_chat, "stamp");
 	
 
-	PurpleChatConversation *chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(chat_sn), chat_sn);
+	PurpleChatConversation *chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(chat_sn), g_strdup(chat_sn));
 	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(chat_sn));
 	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "stamp", g_strdup(chat_stamp));
 	purple_conversation_set_title(PURPLE_CONVERSATION(chatconv), g_strdup(chat_name));
@@ -864,61 +866,154 @@ icq_join_chat_got_chat_info_cb(IcyQueAccount *ia, JsonObject *data, gpointer use
 
 static void
 icq_joined_chat_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data){
-	gchar *chatId = user_data;
+	// We joined a chat, obtain the sn and create the chat conversation.
+
+	gchar *stamp = user_data;
 
 	// {"method":"getIdInfo","reqId":"censored","aimsid":"censored","params":{"id":"AoLFq-UEyLqpbUxAA0c"}}
 	JsonObject* getIdInfoParams = json_object_new();
 	json_object_set_string_member(getIdInfoParams, "aimsid", ia->aimsid);
-	json_object_set_string_member(getIdInfoParams, "id", chatId);
+	json_object_set_string_member(getIdInfoParams, "id", stamp);
 
 	JsonObject* getIdInfoRequest = icq_generate_robusto_request(ia, "getIdInfo", getIdInfoParams);
 
 	gchar* getIdInfoRequestStr = json_object_to_string(getIdInfoRequest);
 	json_object_unref(getIdInfoRequest);
-	g_free(chatId);
+	g_free(stamp);
 	
 	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, getIdInfoRequestStr, icq_join_chat_got_chat_info_cb, NULL);
 	g_free(getIdInfoRequestStr);
 }
 
 static int
-icq_join_chat_send_request(IcyQueAccount *ia, const gchar *chatId)
+icq_join_chat_send_request(IcyQueAccount *ia, const gchar *stamp)
 {
+	// Join a chat.
+
 	// {"method":"joinChat","reqId":"censored","aimsid":"censored","params":{"stamp":"AoLFq-UEyLqpbUxAA0c"}}
 	JsonObject* joinChatParams = json_object_new();
 	json_object_set_string_member(joinChatParams, "aimsid", ia->aimsid);
-	json_object_set_string_member(joinChatParams, "stamp", chatId);
+	json_object_set_string_member(joinChatParams, "stamp", stamp);
 
 	JsonObject *joinChatRequest = icq_generate_robusto_request(ia, "joinChat", joinChatParams);
 
 	gchar* joinChatRequestStr = json_object_to_string(joinChatRequest);
 	json_object_unref(joinChatRequest);
 	
-	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, joinChatRequestStr, icq_joined_chat_cb, g_strdup(chatId));
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, joinChatRequestStr, icq_joined_chat_cb, g_strdup(stamp));
 	g_free(joinChatRequestStr);
-}	
+}
+
+static void
+icq_join_chat_get_chat_info_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data){
+	// Read the chat stamp from the ChatInfo and join the chat.
+
+	/*
+		{
+			"ts": 1576185167,
+			"status": {"code": 20000},
+			"method": "getChatInfo",
+			"reqId": "29884-1576185166",
+			"results": {
+				"name": "MTL/TORONTO CARDING ™",
+				"about": "Spam and Carding ",
+				"stamp": "AoLEztZBCgVxGUuu4jM",
+				"createTime": 1533396838,
+				"avatarLastModified": 1533396936,
+				"blockedCount": 57,
+				"creator": "740484960",
+				"live": true,
+				"controlled": true,
+				"infoVersion": "6593762738562316835",
+				"membersVersion": "6769650523642062326",
+				"membersCount": 2848,
+				"adminsCount": 4,
+				"defaultRole": "member",
+				"regions": "CA",
+				"sn": "680766273@chat.agent",
+				"abuseReportsCurrentCount": 0,
+				"you": {"role": "member"},
+				"members": [
+					{
+						"sn": "746705346",
+						"role": "member",
+						"noAvatar": true,
+						"lastseen": 0,
+						"friendly": "anonymous anonymous",
+						"anketa": {
+							"sn": "746705346",
+							"firstName": "anonymous",
+							"lastName": "anonymous",
+							"friendly": "anonymous anonymous"
+						}
+					},
+				]
+		}
+	*/
+	JsonObject *json_results = json_object_get_object_member(data, "results");
+	const gchar *chat_sn = json_object_get_string_member(json_results, "sn");
+
+	icq_join_chat_send_request(ia, chat_stamp);
+}
+
+static void
+icq_join_chat_get_chat_info_send_request(IcyQueAccount *ia, const gchar *sn){
+	// Obtain the chat stamp and join the chat.
+
+	/*
+		{
+			method: "getChatInfo",
+			reqId: "29884-1576185166",
+			aimsid: "003.4098791917.2548346359:746705346"
+			params: {
+				sn: "680766273@chat.agent",
+				memberLimit: 50
+			}
+		}
+	*/
+
+	JsonObject* getChatInfoParams = json_object_new();
+	json_object_set_string_member(getChatInfoParams, "aimsid", ia->aimsid);
+	json_object_set_string_member(getChatInfoParams, "sn", sn);
+	json_object_set_int_member(getChatInfoParams, "memberLimit", 50);
+
+	JsonObject *getChatInfoRequest = icq_generate_robusto_request(ia, "getChatInfo", getChatInfoParams);
+
+	gchar* getChatInfoRequestStr = json_object_to_string(getChatInfoRequest);
+	json_object_unref(getChatInfoRequest);
+	
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, getChatInfoRequestStr, icq_join_chat_get_chat_info_cb, NULL);
+	g_free(getChatInfoRequestStr);
+
+}
 
 static void
 icq_join_chat(PurpleConnection *pc, GHashTable *data)
 {
 	IcyQueAccount *ia = purple_connection_get_protocol_data(pc);
+
 	const gchar *sn;
-	PurpleChatConversation *chatconv;
-	
 	sn = g_hash_table_lookup(data, "sn");
 	if (sn == NULL)
 	{
 		return;
 	}
 	
+	PurpleChatConversation *chatconv;
 	chatconv = purple_conversations_find_chat_with_account(sn, ia->account);
 	if (chatconv != NULL && !purple_chat_conversation_has_left(chatconv)) {
 		purple_conversation_present(PURPLE_CONVERSATION(chatconv));
 		return;
 	}
 
-	icq_join_chat_send_request(ia, sn);
+	const gchar *stamp;
+	stamp = g_hash_table_lookup(data, "stamp");
+	if (stamp == NULL) {
+		icq_join_chat_get_chat_info_send_request(ia, sn);
+		return;
+	}
 
+	icq_join_chat_send_request(ia, stamp);
 }
 
 static void
