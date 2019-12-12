@@ -821,24 +821,69 @@ icq_chat_invite(PurpleConnection *pc, int id, const char *message, const char *w
 	g_free(uuid);
 }
 
+
+static void
+icq_join_chat_got_chat_info_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data){
+	// Example response:
+	/*
+		{
+			"ts": 1576097893,
+			"status": {
+				"code": 20000
+			},
+			"method": "getIdInfo",
+			"reqId": "censored",
+			"results": {
+				"chat": {
+					"sn": "682293892@chat.agent",
+					"about": "Just learning",
+					"name": "Test",
+					"stamp": "AoLFq-UEyLqpbUxAA0c",
+					"memberCount": 2,
+					"public": true
+				}
+			}
+		}
+	*/
+
+	JsonObject *json_results = json_object_get_object_member(data, "results");
+	JsonObject *json_chat = json_object_get_object_member(json_results, "chat");
+
+	const gchar *chat_sn = json_object_get_string_member(json_chat, "sn");
+	const gchar *chat_name = json_object_get_string_member(json_chat, "name");
+	const gchar *chat_stamp = json_object_get_string_member(json_chat, "stamp");
+	
+
+	PurpleChatConversation *chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(chat_sn), chat_sn);
+	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(chat_sn));
+	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "stamp", g_strdup(chat_stamp));
+	purple_conversation_set_title(PURPLE_CONVERSATION(chatconv), g_strdup(chat_name));
+
+	//TODO download history and room list members
+}
+
 static void
 icq_joined_chat_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data){
 	gchar *chatId = user_data;
 
-	PurpleChatConversation *chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(chatId), chatId);
-	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(chatId));
-	
-	purple_conversation_present(PURPLE_CONVERSATION(chatconv));
+	// {"method":"getIdInfo","reqId":"censored","aimsid":"censored","params":{"id":"AoLFq-UEyLqpbUxAA0c"}}
+	JsonObject* getIdInfoParams = json_object_new();
+	json_object_set_string_member(getIdInfoParams, "aimsid", ia->aimsid);
+	json_object_set_string_member(getIdInfoParams, "id", chatId);
 
+	JsonObject* getIdInfoRequest = icq_generate_robusto_request(ia, "getIdInfo", getIdInfoParams);
+
+	gchar* getIdInfoRequestStr = json_object_to_string(getIdInfoRequest);
+	json_object_unref(getIdInfoRequest);
 	g_free(chatId);
 	
-	//TODO download history and room list members
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, getIdInfoRequestStr, icq_join_chat_got_chat_info_cb, NULL);
+	g_free(getIdInfoRequestStr);
 }
 
 static int
-do_icq_join_chat(IcyQueAccount *ia, const gchar *chatId)
+icq_join_chat_send_request(IcyQueAccount *ia, const gchar *chatId)
 {
-
 	// {"method":"joinChat","reqId":"censored","aimsid":"censored","params":{"stamp":"AoLFq-UEyLqpbUxAA0c"}}
 	JsonObject* joinChatParams = json_object_new();
 	json_object_set_string_member(joinChatParams, "aimsid", ia->aimsid);
@@ -872,7 +917,7 @@ icq_join_chat(PurpleConnection *pc, GHashTable *data)
 		return;
 	}
 
-	do_icq_join_chat(ia, sn);
+	icq_join_chat_send_request(ia, sn);
 
 }
 
@@ -1077,7 +1122,6 @@ icq_unread_message_load_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_da
 		gint i, len = json_array_get_length(persons);
 		if(len == 0) return;
 		if(len > 1) {
-			purple_connection_error(ia->pc, PURPLE_CONNECTION_ERROR_OTHER_ERROR, "Group-Conversations not yet supported. Please post the icyque input of the debug window in a github issue.");
 			return;
 		}
 		JsonObject* firstPerson = json_array_get_object_element(persons, 0);
