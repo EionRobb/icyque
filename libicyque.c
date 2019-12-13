@@ -852,12 +852,14 @@ icq_join_chat_got_chat_info_cb(IcyQueAccount *ia, JsonObject *data, gpointer use
 	const gchar *chat_sn = json_object_get_string_member(json_chat, "sn");
 	const gchar *chat_name = json_object_get_string_member(json_chat, "name");
 	const gchar *chat_stamp = json_object_get_string_member(json_chat, "stamp");
+	const gchar *chat_about = json_object_get_string_member(json_chat, "about");
 	
 
 	PurpleChatConversation *chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(chat_sn), chat_sn);
 	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(chat_sn));
 	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "stamp", g_strdup(chat_stamp));
 	purple_conversation_set_title(PURPLE_CONVERSATION(chatconv), g_strdup(chat_name));
+	purple_conv_chat_set_topic(chatconv, NULL, g_strdup(chat_about));
 
 	//TODO download history and room list members
 }
