@@ -884,21 +884,106 @@ icq_joined_chat_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data){
 }
 
 static int
-icq_join_chat_send_request(IcyQueAccount *ia, const gchar *chatId)
+icq_join_chat_send_request(IcyQueAccount *ia, const gchar *stamp)
 {
 	// {"method":"joinChat","reqId":"censored","aimsid":"censored","params":{"stamp":"AoLFq-UEyLqpbUxAA0c"}}
 	JsonObject* joinChatParams = json_object_new();
 	json_object_set_string_member(joinChatParams, "aimsid", ia->aimsid);
-	json_object_set_string_member(joinChatParams, "stamp", chatId);
+	json_object_set_string_member(joinChatParams, "stamp", stamp);
 
 	JsonObject *joinChatRequest = icq_generate_robusto_request(ia, "joinChat", joinChatParams);
 
 	gchar* joinChatRequestStr = json_object_to_string(joinChatRequest);
 	json_object_unref(joinChatRequest);
 	
-	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, joinChatRequestStr, icq_joined_chat_cb, g_strdup(chatId));
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, joinChatRequestStr, icq_joined_chat_cb, g_strdup(stamp));
 	g_free(joinChatRequestStr);
-}	
+}
+
+static void
+icq_join_chat_with_sn_convert_request_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data)
+{
+	// Read the chat stamp from the ChatInfo and join the chat.
+
+	/*
+		{
+			"ts": 1576185167,
+			"status": {"code": 20000},
+			"method": "getChatInfo",
+			"reqId": "29884-1576185166",
+			"results": {
+				"name": "MTL/TORONTO CARDING ™",
+				"about": "Spam and Carding ",
+				"stamp": "AoLEztZBCgVxGUuu4jM",
+				"createTime": 1533396838,
+				"avatarLastModified": 1533396936,
+				"blockedCount": 57,
+				"creator": "740484960",
+				"live": true,
+				"controlled": true,
+				"infoVersion": "6593762738562316835",
+				"membersVersion": "6769650523642062326",
+				"membersCount": 2848,
+				"adminsCount": 4,
+				"defaultRole": "member",
+				"regions": "CA",
+				"sn": "680766273@chat.agent",
+				"abuseReportsCurrentCount": 0,
+				"you": {"role": "member"},
+				"members": [
+					{
+						"sn": "746705346",
+						"role": "member",
+						"noAvatar": true,
+						"lastseen": 0,
+						"friendly": "anonymous anonymous",
+						"anketa": {
+							"sn": "746705346",
+							"firstName": "anonymous",
+							"lastName": "anonymous",
+							"friendly": "anonymous anonymous"
+						}
+					},
+				]
+		}
+	*/
+
+	JsonObject *json_results = json_object_get_object_member(data, "results");
+	const gchar *chat_stamp = json_object_get_string_member(json_results, "stamp");
+
+	icq_join_chat_send_request(ia, chat_stamp);
+}
+
+static void
+icq_join_chat_with_sn_send_convert_request(IcyQueAccount *ia, const gchar *sn)
+{
+	// Obtain the chat stamp and join the chat.
+
+	/*
+		{
+			method: "getChatInfo",
+			reqId: "29884-1576185166",
+			aimsid: "003.4098791917.2548346359:746705346"
+			params: {
+				sn: "680766273@chat.agent",
+				memberLimit: 50
+			}
+		}
+	*/
+
+	JsonObject* getChatInfoParams = json_object_new();
+	json_object_set_string_member(getChatInfoParams, "aimsid", ia->aimsid);
+	json_object_set_string_member(getChatInfoParams, "sn", sn);
+	json_object_set_int_member(getChatInfoParams, "memberLimit", 50);
+
+	JsonObject *getChatInfoRequest = icq_generate_robusto_request(ia, "getChatInfo", getChatInfoParams);
+
+	gchar* getChatInfoRequestStr = json_object_to_string(getChatInfoRequest);
+	json_object_unref(getChatInfoRequest);
+
+	icq_fetch_url_with_method(ia, "POST", ICQ_RAPI_SERVER, getChatInfoRequestStr, icq_join_chat_with_sn_convert_request_cb, NULL);
+	g_free(getChatInfoRequestStr);
+}
 
 static void
 icq_join_chat(PurpleConnection *pc, GHashTable *data)
@@ -919,6 +1004,13 @@ icq_join_chat(PurpleConnection *pc, GHashTable *data)
 		return;
 	}
 
+	// Is it actually an sn or a stamp? An sn ends with @chat.agent
+	if (g_str_has_suffix(sn, "@chat.agent")) {
+		icq_join_chat_with_sn_send_convert_request(ia, sn);
+		return;
+	}
+
+	// The sn is actually a stamp
 	icq_join_chat_send_request(ia, sn);
 
 }
