@@ -307,9 +307,14 @@ icq_response_callback(PurpleHttpConnection *http_conn,
 
 		purple_debug_misc("icyque", "Got response: %s\n", body);
 
-		if (conn->callback && root != NULL) {
-			conn->callback(conn->ia, json_node_get_object(root), conn->user_data);
+		if (conn->callback) {
+			if (root != NULL) {
+				conn->callback(conn->ia, json_node_get_object(root), conn->user_data);
+			} else {
+				conn->callback(conn->ia, NULL, conn->user_data);
+			}
 		}
+
 	}
 
 	g_object_unref(parser);
