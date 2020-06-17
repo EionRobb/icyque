@@ -28,10 +28,11 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #	define PURPLE_PLUGINS
 #endif
 
-#define ICQ_EVENTS      "myInfo,presence,buddylist,typing,hiddenChat,hist,mchat,sentIM,imState,dataIM,offlineIM,userAddedToBuddyList,service,lifestream,apps,permitDeny,replace,diff" //webrtcMsg
-#define ICQ_PRESENCE_FIELDS    "quiet,ssl,abFriendly,role,capabilities,role,abPhones,aimId,autoAddition,friendly,largeIconId,lastseen,mute,pending,state,eventType,seqNum,displayId,friendlyName,userType,statusMsg,statusTime,buddyIcon,abContactName,abPhones,official"
-#define ICQ_ASSERT_CAPS "094613564C7F11D18222444553540000,0946135A4C7F11D18222444553540000,0946135B4C7F11D18222444553540000,0946135D4C7F11D18222444553540000,0946135C4C7F11D18222444553540000,094613574C7F11D18222444553540000,094613504C7F11D18222444553540000,094613514C7F11D18222444553540000,094613534C7F11D18222444553540000,0946135E4C7F11D18222444553540000,094613544C7F11D18222444553540000,0946135F4C7F11D18222444553540000"
-#define ICQ_API_SERVER        "https://api.icq.net"
+#define ICQ_EVENTS             "myInfo,presence,buddylist,typing,hiddenChat,hist,mchat,sentIM,imState,dataIM,offlineIM,userAddedToBuddyList,service,lifestream,apps,permitDeny,diff" // ,webrtcMsg
+#define ICQ_PRESENCE_FIELDS    "aimId,displayId,friendly,friendlyName,state,userType,statusMsg,statusTime,lastseen,ssl,mute,abContactName,abPhoneNumber,abPhones,official,quiet,autoAddition,largeIconId,nick,userState"
+#define ICQ_ASSERT_CAPS "094613584C7F11D18222444553540000,0946135C4C7F11D18222444553540000,0946135b4c7f11d18222444553540000,0946135E4C7F11D18222444553540000,AABC2A1AF270424598B36993C6231952,1f99494e76cbc880215d6aeab8e42268"
+#define ICQ_API_SERVER        "https://api.icq.net"
+#define ICQ_API14_SERVER      "https://u.icq.net/api/v14/wim"
 #define ICQ_RAPI_SERVER       "https://rapi.icq.net"
 #define ICQ_DEVID             "ao1mAegmj4_7xQOy"
 
@@ -860,11 +861,13 @@ icq_join_chat_got_chat_info_cb(IcyQueAccount *ia, JsonObject *data, gpointer use
 	const gchar *chat_about = json_object_get_string_member(json_chat, "about");
 	
 
-	PurpleChatConversation *chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(chat_sn), chat_sn);
-	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(chat_sn));
-	purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "stamp", g_strdup(chat_stamp));
-	purple_conversation_set_title(PURPLE_CONVERSATION(chatconv), g_strdup(chat_name));
-	purple_conv_chat_set_topic(chatconv, NULL, g_strdup(chat_about));
+	if (chat_sn) {
+		PurpleChatConversation *chatconv = purple_serv_got_joined_chat(ia->pc, g_str_hash(chat_sn), chat_sn);
+		purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "sn", g_strdup(chat_sn));
+		purple_conversation_set_data(PURPLE_CONVERSATION(chatconv), "stamp", g_strdup(chat_stamp));
+		purple_conversation_set_title(PURPLE_CONVERSATION(chatconv), g_strdup(chat_name));
+		purple_conv_chat_set_topic(chatconv, NULL, g_strdup(chat_about));
+	}
 
 	//TODO download history and room list members
 }
@@ -1600,16 +1603,16 @@ static void
 icq_session_start_cb(IcyQueAccount *ia, JsonObject *obj, gpointer user_data)
 {
 	if (!ICYQUE_ACCOUNT_IS_VALID(ia)) return;
-	
+
 	JsonObject *response = json_object_get_object_member(obj, "response");
 	JsonObject *data = json_object_get_object_member(response, "data");
-	
+
 	const gchar *aimsid = json_object_get_string_member(data, "aimsid");
 	const gchar *fetchBaseURL = json_object_get_string_member(data, "fetchBaseURL");
-	
+
 	ia->aimsid = g_strdup(aimsid);
 	ia->last_fetchBaseURL = g_strdup(fetchBaseURL);
-	
+
 	icq_robusto_gen_token(ia);
 }
 
@@ -1618,36 +1621,24 @@ icq_session_start(IcyQueAccount *ia)
 {
 	if (!ICYQUE_ACCOUNT_IS_VALID(ia)) return;
 	
-	const gchar *url = ICQ_API_SERVER "/aim/startSession";
-	GString *postdata = g_string_new(NULL);
-	
-	// Make sure these are added alphabetically for the signature to work
-	g_string_append_printf(postdata, "a=%s&", purple_url_encode(ia->token));
-	// g_string_append_printf(postdata, "assertCaps=%s&", purple_url_encode(ICQ_ASSERT_CAPS));
-	// g_string_append_printf(postdata, "buildNumber=%s&", purple_url_encode("23341"));
-	// g_string_append_printf(postdata, "clientName=%s&", purple_url_encode("ICQ"));
-	g_string_append_printf(postdata, "deviceId=%s&", purple_url_encode(ia->device_id));
-	g_string_append_printf(postdata, "events=%s&", purple_url_encode(ICQ_EVENTS));
-	g_string_append(postdata, "f=json&");
-	g_string_append(postdata, "imf=plain&");
-	g_string_append_printf(postdata, "includePresenceFields=%s&", purple_url_encode(ICQ_PRESENCE_FIELDS));
-	// g_string_append_printf(postdata, "interestCaps=%s&", purple_url_encode("094613504C7F11D18222444553540000,094613514C7F11D18222444553540000,8EEC67CE70D041009409A7C1602A5C84"));
-	g_string_append(postdata, "invisible=false&");
-	g_string_append_printf(postdata, "k=%s&", purple_url_encode(ICQ_DEVID));
-	g_string_append(postdata, "language=en-US&");
-	g_string_append(postdata, "rawMsg=0&");
-	g_string_append(postdata, "sessionTimeout=31536000&");
-	//g_string_append(postdata, "sig_sha256_force=1&");
-	g_string_append_printf(postdata, "ts=%d&", (int)(time(NULL) - ia->server_time_offset));
-	g_string_append(postdata, "view=online"); //todo mobile?
-	
-	gchar *sig_sha256 = icq_get_url_sign(ia, TRUE, url, postdata->str);
-	g_string_append_printf(postdata, "&sig_sha256=%s", purple_url_encode(sig_sha256));
-	g_free(sig_sha256);
-	
-	icq_fetch_url_with_method(ia, "POST", url, postdata->str, icq_session_start_cb, NULL);
-	
-	g_string_free(postdata, TRUE);
+	GString *url = g_string_new(ICQ_API14_SERVER "/aim/startSession?");
+
+	g_string_append_printf(url, "a=%s&", purple_url_encode(ia->token));
+	g_string_append_printf(url, "ts=%d&", (int)(time(NULL) - ia->server_time_offset));
+	g_string_append_printf(url, "k=%s&", purple_url_encode(ICQ_DEVID));
+	g_string_append(url, "view=online&");
+	g_string_append(url, "clientName=webicq&");
+	g_string_append(url, "language=en-US&");
+	g_string_append_printf(url, "deviceId=%s&", purple_url_encode(ia->device_id));
+	g_string_append(url, "sessionTimeout=31536000&");
+	g_string_append_printf(url, "assertCaps=%s&", purple_url_encode(ICQ_ASSERT_CAPS));
+	g_string_append(url, "interestCaps=&");
+	g_string_append_printf(url, "events=%s&", purple_url_encode(ICQ_EVENTS));
+	g_string_append_printf(url, "includePresenceFields=%s", purple_url_encode(ICQ_PRESENCE_FIELDS));
+
+	icq_fetch_url_with_method(ia, "POST", url->str, NULL, icq_session_start_cb, NULL);
+
+	g_string_free(url, TRUE);
 }
 
 static void
