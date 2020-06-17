@@ -103,6 +103,8 @@ FAILNOPURPLE:
 clean:
 	rm -f $(ICYQUE_TARGET)
 
+format: $(PURPLE_C_FILES)
+	clang-format -i $^
 
 installer: purple-icyque.nsi libicyque.dll
 	$(MAKENSIS) purple-icyque.nsi
