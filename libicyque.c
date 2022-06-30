@@ -33,7 +33,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define ICQ_ASSERT_CAPS "094613584C7F11D18222444553540000,0946135C4C7F11D18222444553540000,0946135b4c7f11d18222444553540000,0946135E4C7F11D18222444553540000,AABC2A1AF270424598B36993C6231952,1f99494e76cbc880215d6aeab8e42268"
 #define ICQ_API_SERVER        "https://api.icq.net"
 #define ICQ_API14_SERVER      "https://u.icq.net/api/v14/wim"
-#define ICQ_RAPI_SERVER       "https://rapi.icq.net"
+#define ICQ_RAPI_SERVER       "https://u.icq.net/rapi"
 #define ICQ_DEVID             "ao1mAegmj4_7xQOy"
 
 #ifndef _
