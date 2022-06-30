@@ -189,7 +189,7 @@ icq_generate_robusto_request(IcyQueAccount *ia, const gchar* method, JsonObject*
 	json_object_set_string_member(robustoRequest, "method", method);
 	
 	GString *request_id = g_string_new(NULL);
-	g_string_append_printf(request_id, "%lu-%ld", ia->robusto_request_id++, time(NULL) - ia->server_time_offset);
+	g_string_append_printf(request_id, "%" G_GUINT64_FORMAT "-%" G_GINT64_FORMAT, ia->robusto_request_id++, time(NULL) - ia->server_time_offset);
 	json_object_set_string_member(robustoRequest, "reqId", request_id->str);
 	g_string_free(request_id, TRUE);
 	
@@ -891,7 +891,7 @@ icq_joined_chat_cb(IcyQueAccount *ia, JsonObject *data, gpointer user_data){
 	g_free(getIdInfoRequestStr);
 }
 
-static int
+static void
 icq_join_chat_send_request(IcyQueAccount *ia, const gchar *stamp)
 {
 	// {"method":"joinChat","reqId":"censored","aimsid":"censored","params":{"stamp":"AoLFq-UEyLqpbUxAA0c"}}
